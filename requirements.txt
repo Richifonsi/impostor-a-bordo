@@ -1,0 +1,2 @@
+# Impostor a Bordo solo usa la biblioteca estándar de Python.
+# Este archivo permite que Render construya el servicio web.
