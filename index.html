@@ -1,0 +1,51 @@
+<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Impostor a Bordo</title>
+<style>
+body{margin:0;font-family:system-ui;background:radial-gradient(#1b2340,#05070f);color:#eef;min-height:100vh}
+h1{text-align:center;margin:14px;letter-spacing:2px}.wrap{display:grid;grid-template-columns:1fr 340px;gap:14px;padding:14px;max-width:1150px;margin:auto}
+.card{background:#ffffff12;border:1px solid #ffffff22;border-radius:16px;padding:14px;backdrop-filter:blur(8px)}
+#map{position:relative;height:460px}.room{position:absolute;width:118px;height:70px;border-radius:12px;background:#2c3a66;border:2px solid #4a5f9e;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;transition:.2s}
+.room.me{border-color:#ffd54a;box-shadow:0 0 18px #ffd54a88}.room.ex{border-color:#5fe08a}.room.task{background:#3b5a3b}
+.dots span{display:inline-block;width:12px;height:12px;border-radius:50%;margin:1px}
+button{background:#4a6cff;color:#fff;border:0;border-radius:10px;padding:8px 12px;margin:3px;cursor:pointer;font-weight:600}button.red{background:#e0435a}button.gray{background:#556}
+#log{height:240px;overflow:auto;font-size:13px;line-height:1.45}input{padding:8px;border-radius:8px;border:0;width:140px}
+.bar{height:10px;background:#333;border-radius:6px;overflow:hidden}.bar div{height:100%;background:#5fe08a}
+svg{position:absolute;inset:0;pointer-events:none}.big{font-size:22px;text-align:center;padding:10px}
+</style>
+<h1>🚀 IMPOSTOR A BORDO</h1>
+<div class="wrap"><div class="card"><div id="map"><svg id="lines" width="100%" height="100%"></svg></div>
+<div>Tareas de la tripulación</div><div class="bar"><div id="prog" style="width:0"></div></div></div>
+<div><div class="card" id="panel"></div><div class="card" style="margin-top:12px"><b>Registro</b><div id="log"></div></div></div></div>
+<script>
+const POS={"Barra":[300,30],"Tostadora":[520,30],"Caja":[300,150],"Bodega de granos":[300,280],"Cuarto de máquinas":[110,280],"Cámaras":[60,170],"Terraza":[640,170],"Cocina":[520,300],"Molinos":[150,390],"Caldera de espresso":[10,390]};
+const COL=["#e0435a","#4a6cff","#5fe08a","#ffd54a","#c45cff","#ff8c3a","#3ad4ff","#ff7ad9","#aaa","#fff"];
+let me=JSON.parse(localStorage.ib||"{}"),S=null;
+async function post(o){const r=await (await fetch("/",{method:"POST",body:JSON.stringify(Object.assign({name:me.name,token:me.token},o))})).json();if(r.error)alert(r.error);if(r.token){me={name:o.name,token:r.token};localStorage.ib=JSON.stringify(me)}poll();return r}
+async function poll(){S=await (await fetch(`/state?name=${encodeURIComponent(me.name||"")}&token=${me.token||""}`)).json();draw()}
+function draw(){const m=document.getElementById("map"),M=S.me;m.querySelectorAll(".room").forEach(e=>e.remove());let ln="";
+for(const[a,bs]of Object.entries(S.map))for(const b of bs){const[x1,y1]=POS[a],[x2,y2]=POS[b];ln+=`<line x1=${x1+59} y1=${y1+35} x2=${x2+59} y2=${y2+35} stroke="#4a5f9e55" stroke-width=3 />`}
+document.getElementById("lines").innerHTML=ln;
+const cl={};S.players.forEach((p,i)=>cl[p.name]=COL[i%10]);
+for(const r in POS){const d=document.createElement("div");d.className="room";d.style.left=POS[r][0]+"px";d.style.top=POS[r][1]+"px";let dots="";
+if(M){if(M.room==r){d.classList.add("me");dots=[M.name,...M.here].map(n=>`<span style="background:${cl[n]}" title="${n}"></span>`).join("")+M.bodies.map(n=>"💀").join("")}
+if(M.exits.includes(r)&&S.phase=="play"){d.classList.add("ex");d.onclick=()=>post({action:"move",target:r})}
+if(M.tasks.includes(r))d.classList.add("task");if(M.vent==r){d.style.borderStyle="dashed";d.onclick=()=>post({action:"vent"})}}
+d.innerHTML=`<b>${r}</b><div class=dots>${dots}</div>`;m.appendChild(d)}
+const[dn,t]=S.progress;document.getElementById("prog").style.width=(t?dn/t*100:0)+"%";
+document.getElementById("log").innerHTML=S.log.map(x=>`<div>${x}</div>`).join("");document.getElementById("log").scrollTop=1e9;
+let h="";if(!M){h=`<b>Únete</b><br><input id=n placeholder="Tu nombre"><button onclick="post({action:'join',name:n.value})">Entrar</button>`}
+else{h=`<div>Hola <b style="color:${cl[M.name]}">${M.name}</b> ${M.alive?"":"👻"}</div>`;
+if(S.phase=="lobby")h+=`<p>Jugadores: ${S.players.map(p=>p.name).join(", ")}</p><button onclick="post({action:'start'})">Empezar partida</button>`;
+else{h+=`<div class=big style="color:${M.role=="impostor"?"#e0435a":"#5fe08a"}">${M.role=="impostor"?"🔪 IMPOSTOR":"🧑‍🚀 TRIPULANTE"}</div><div>Estás en <b>${M.room}</b></div>`;
+if(M.role=="tripulante")h+=`<div>Tareas: ${M.tasks.join(", ")||"¡listas!"}</div>`;
+if(S.phase=="play"){if(M.tasks.includes(M.room)||M.role=="impostor")h+=`<button onclick="post({action:'task'})">Hacer tarea</button>`;
+if(M.alive){if(M.role=="impostor")M.here.forEach(n=>h+=`<button class=red onclick="post({action:'kill',target:'${n}'})">Matar a ${n}</button>`)+(M.cd?`<div>Enfriamiento: ${M.cd}</div>`:"");
+if(M.bodies.length)h+=`<button class=red onclick="post({action:'report'})">Reportar cuerpo</button>`;h+=`<button class=gray onclick="post({action:'meeting'})">🚨 Emergencia</button>`}
+h+=`<p style="font-size:12px">Haz clic en una sala con borde verde para moverte.</p>`}
+if(S.phase=="meeting"){h+=`<h3>🗳️ Reunión</h3><input id=c placeholder="Di algo"><button onclick="post({action:'chat',text:c.value})">Hablar</button><br>`;
+if(M.alive)S.players.filter(p=>p.alive).forEach(p=>h+=`<button onclick="post({action:'vote',target:'${p.name}'})">${p.name}${p.voted?" ✔":""}</button>`)+(h+=`<button class=gray onclick="post({action:'vote',target:'skip'})">Saltar</button>`)}
+if(S.phase=="end")h+=`<div class=big>${S.winner}</div>`}
+h+=`<p><button class=gray onclick="if(confirm('¿Reiniciar la partida para todos?')){localStorage.ib='{}';me={};post({action:'reset'})}">Nueva partida</button></p>`}
+document.getElementById("panel").innerHTML=h}
+poll();setInterval(()=>{if(!document.activeElement||document.activeElement.tagName!="INPUT")poll()},2000);
+</script></html>
