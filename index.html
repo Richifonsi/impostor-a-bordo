@@ -415,12 +415,9 @@ async function post(o){
   if(act==="move"||act==="vent")travelHint=act;
   try{
     const r=await (await fetch("/",{method:"POST",body:JSON.stringify(Object.assign({name:me.name,token:me.token},o))})).json();
-    /* "push" puede no existir todavía en el servidor: ese rechazo no tapa la animación. */
-    const pushPending=act==="push"&&r.error==="Acción desconocida";
-    if(r.error&&!pushPending)alert(r.error);
+    if(r.error)alert(r.error);
     if(r.token){me={name:o.name,token:r.token};localStorage.ib=JSON.stringify(me)}
     if(!r.error&&act==="kill")queueFx("attack",me.name,o.target);
-    if((!r.error||pushPending)&&act==="push")queueFx("push",me.name,o.target);
     await poll();
     return r;
   }finally{if(act==="move"||act==="vent")travelHint=null}
@@ -432,26 +429,26 @@ async function poll(){
   draw();
 }
 function whoName(x){return x&&typeof x==="object"?x.name:x}
-function clampLives(n){const v=Number(n);if(!Number.isFinite(v))return null;return Math.max(0,Math.min(3,Math.round(v)))}
+function maxLives(){const n=S&&S.rules&&Number(S.rules.lives);return Number.isFinite(n)&&n>0?Math.round(n):3}
+function clampLives(n){const v=Number(n);if(!Number.isFinite(v))return null;return Math.max(0,Math.min(maxLives(),Math.round(v)))}
 function livesOf(name,dead){
-  if(!S||!name)return dead?0:3;
+  const max=maxLives();
+  if(!S||!name)return dead?0:max;
   const p=(S.players||[]).find(x=>x.name===name);
-  const me=S.me&&S.me.name===name?S.me:null;
-  const fromP=p?clampLives(p.lives):null;
-  if(fromP!=null)return fromP;
-  const fromM=me?clampLives(me.lives):null;
-  if(fromM!=null)return fromM;
-  const bags=[me&&me.here,me&&me.bodies];
-  for(const bag of bags){if(!bag)continue;for(const item of bag){if(item&&typeof item==="object"&&item.name===name){const v=clampLives(item.lives);if(v!=null)return v}}}
+  if(p&&p.lives!=null){const v=clampLives(p.lives);if(v!=null)return v}
+  if(S.me&&S.me.name===name&&S.me.lives!=null){const v=clampLives(S.me.lives);if(v!=null)return v}
+  const pos=S.me&&S.me.positions;
+  if(pos){const row=pos.find(q=>q&&q.name===name);if(row&&row.lives!=null){const v=clampLives(row.lives);if(v!=null)return v}}
   if(dead)return 0;
-  if(me&&me.alive===false)return 0;
+  if(S.me&&S.me.name===name&&S.me.alive===false)return 0;
   if(p&&S.phase!=="play"&&p.alive===false)return 0;
-  return 3;
+  return max;
 }
 function livesHtml(n){
-  const c=clampLives(n);const v=c==null?3:c;
-  let s=`<span class="lives" role="img" aria-label="${v} de 3 vidas">`;
-  for(let i=0;i<3;i++)s+=`<svg class="heart${i<v?"":" off"}" viewBox="0 0 16 14" aria-hidden="true"><path d="M8 12.4S1.6 8.6 1.6 5.1A2.9 2.9 0 0 1 8 4.2a2.9 2.9 0 0 1 6.4.9c0 3.5-6.4 7.3-6.4 7.3z"/></svg>`;
+  const max=maxLives();
+  const c=clampLives(n);const v=c==null?max:c;
+  let s=`<span class="lives" role="img" aria-label="${v} de ${max} vidas">`;
+  for(let i=0;i<max;i++)s+=`<svg class="heart${i<v?"":" off"}" viewBox="0 0 16 14" aria-hidden="true"><path d="M8 12.4S1.6 8.6 1.6 5.1A2.9 2.9 0 0 1 8 4.2a2.9 2.9 0 0 1 6.4.9c0 3.5-6.4 7.3-6.4 7.3z"/></svg>`;
   return s+"</span>";
 }
 function chipLi(name,mode){
@@ -506,13 +503,14 @@ function draw(){
         h+=`<div class="actions">`;
         if((M.tasks||[]).includes(M.room)||imp)h+=`<button class="btn btn-primary" type="button" onclick="post({action:'task'})">Hacer tarea</button>`;
         if(M.alive){
-          (M.here||[]).forEach(n=>{const name=whoName(n);if(!name)return;h+=`<button class="btn btn-ghost gray" type="button" title="Empujar a quien está cerca" onclick='post({action:"push",target:${JSON.stringify(name)}})'>Empujar a ${esc(name)}</button>`});
-          if(imp)(M.here||[]).forEach(n=>{const name=whoName(n);if(!name)return;h+=`<button class="btn btn-danger red" type="button" onclick='post({action:"kill",target:${JSON.stringify(name)}})'>${avatarSVG(name,"live",20)} Matar a ${esc(name)}</button>`});
+          if(imp)(M.here||[]).forEach(n=>{const name=whoName(n);if(!name)return;h+=`<button class="btn btn-danger red" type="button" onclick='post({action:"kill",target:${JSON.stringify(name)}})'>${avatarSVG(name,"live",20)} Atacar a ${esc(name)}</button>`});
+          (M.here||[]).forEach(n=>{const name=whoName(n);if(!name)return;h+=`<button class="btn btn-ghost gray" type="button" onclick='post({action:"push",target:${JSON.stringify(name)}})'>Empujar a ${esc(name)}</button>`});
           if((M.bodies||[]).length)h+=`<button class="btn btn-danger red" type="button" onclick="post({action:'report'})">Reportar cuerpo</button>`;
           h+=`<button class="btn btn-ghost gray" type="button" onclick="post({action:'meeting'})">🚨 Emergencia</button>`;
         }
         h+=`</div>`;
-        if(imp&&M.cd)h+=`<p class="cooldown">Enfriamiento: ${M.cd}</p>`;
+        if(imp&&M.cd)h+=`<p class="cooldown">Espera ${M.cd} acciones más</p>`;
+        if(M.alive&&M.push_cd)h+=`<p class="cooldown">Espera ${M.push_cd} acciones más para empujar</p>`;
         h+=`<p class="hint">Haz clic en una sala con borde verde para moverte.</p>`;
       }
       if(S.phase=="meeting")h+=`<p class="mtg-note">Reunión en curso: la votación está en la mesa.</p>`;
@@ -634,16 +632,16 @@ const VENT_DRAW=[
   {a:"Terraza",b:"Cocina",pts:[[918,214],[918,292]],ga:[892,150],gb:[900,312],lx:948,ly:252}
 ];
 const HALL_LABELS=[{x:470,y:48,t:"cubierta"},{x:640,y:334,t:"pasillo",rot:-90},{x:640,y:706,t:"pasillo"},{x:490,y:820,t:"pasillo inferior"}];
-let combatFx=[], seenBodies=null, seenLives=null, seenLog=null, seenEvt=null;
+let combatFx=[], seenBodies=null, seenLives=null, seenLog=null, seenEvt=null, seenPushId=null;
 function attackLunge(u){if(u<0.28)return Math.sin(u/0.28*Math.PI/2);if(u<0.5)return 1;return Math.cos(Math.min(1,(u-0.5)/0.5)*Math.PI/2)}
 function pushLunge(u){if(u<0.32)return Math.sin(u/0.32*Math.PI/2);return Math.cos(Math.min(1,(u-0.32)/0.68)*Math.PI/2)}
-function queueFx(type, from, to){
+function queueFx(type, from, to, slide){
   if(!to||from===to)return;
   const now=performance.now();
   combatFx=combatFx.filter(fx=>now-fx.t0<fx.dur);
   const hit=combatFx.find(fx=>fx.type===type&&fx.to===to&&now-fx.t0<680);
-  if(hit){if(from&&!hit.from)hit.from=from;return}
-  combatFx.push({type, from:from||null, to, t0:now, dur:reduceMotion?240:(type==="attack"?640:560)});
+  if(hit){if(from&&!hit.from)hit.from=from;if(slide&&!hit.slide)hit.slide=slide;return}
+  combatFx.push({type, from:from||null, to, slide:slide||null, t0:now, dur:reduceMotion?240:(type==="attack"?640:560)});
   ensureLoop();
 }
 function guessAttacker(victim){
@@ -689,22 +687,31 @@ function freshEvents(prev, arr){
   if(JSON.stringify(arr[arr.length-1])!==JSON.stringify(prev[prev.length-1]))return [arr[arr.length-1]];
   return [];
 }
+function pushSlide(lp){
+  if(!lp||!lp.from||!lp.to)return null;
+  const x=Number(lp.to.x)-Number(lp.from.x), y=Number(lp.to.y)-Number(lp.from.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+  return {x, y};
+}
 function observeCombat(){
-  if(!S||S.phase==="lobby"){seenBodies=[];seenLives={};seenLog=[];seenEvt=[];return}
+  if(!S||S.phase==="lobby"){seenBodies=[];seenLives={};seenLog=[];seenEvt=[];seenPushId=null;return}
   const bodies=(S.me&&S.me.bodies||[]).map(whoName).filter(Boolean);
   const lives={};
   (S.players||[]).forEach(p=>{const v=clampLives(p.lives);if(v!=null)lives[p.name]=v});
   if(S.me){const v=clampLives(S.me.lives);if(v!=null)lives[S.me.name]=v}
   const log=(S.log||[]).slice();
   const ev=Array.isArray(S.events)?S.events:(Array.isArray(S.fx)?S.fx:[]);
+  const lp=S.last_push;
+  const pushId=lp&&lp.id!=null?lp.id:null;
   if(seenLog){
     const prevB=new Set(seenBodies);
     bodies.forEach(b=>{if(!prevB.has(b))queueFx("attack", guessAttacker(b), b)});
     Object.keys(lives).forEach(n=>{if(seenLives[n]!=null&&lives[n]<seenLives[n])queueFx("attack", guessAttacker(n), n)});
     addedLines(seenLog, log).forEach(line=>{const hit=readFxLine(line);if(hit)queueFx(hit.type, hit.from, hit.to)});
     freshEvents(seenEvt, ev).forEach(e=>{const hit=eventFx(e);if(hit)queueFx(hit.type, hit.from, hit.to)});
+    if(lp&&pushId!==seenPushId)queueFx("push", lp.by, lp.target, pushSlide(lp));
   }
-  seenBodies=bodies; seenLives=lives; seenLog=log; seenEvt=ev.slice();
+  seenBodies=bodies; seenLives=lives; seenLog=log; seenEvt=ev.slice(); seenPushId=pushId;
 }
 function motionFor(name){
   if(reduceMotion)return {dx:0, dy:0};
@@ -713,18 +720,26 @@ function motionFor(name){
   for(const fx of combatFx){
     const u=(now-fx.t0)/fx.dur;
     if(u<0||u>=1)continue;
+    const slide=fx.slide;
+    const slideLen=slide?Math.hypot(slide.x, slide.y):0;
     const a=fx.fromPos, b=fx.toPos;
-    if(!a||!b)continue;
-    const dist=Math.hypot(b.x-a.x, b.y-a.y)||1;
-    const ux=(b.x-a.x)/dist, uy=(b.y-a.y)/dist;
+    let ux=0, uy=0, have=false;
+    if(slideLen>0.5){ux=slide.x/slideLen; uy=slide.y/slideLen; have=true}
+    else if(a&&b){const dist=Math.hypot(b.x-a.x, b.y-a.y)||1; ux=(b.x-a.x)/dist; uy=(b.y-a.y)/dist; have=true}
+    if(!have)continue;
     if(name===fx.from){
       const amp=fx.type==="attack"?40:14;
       const k=fx.type==="attack"?attackLunge(u):pushLunge(u);
       dx+=ux*amp*k; dy+=uy*amp*k;
     }else if(name===fx.to){
-      const amp=fx.type==="attack"?8:28;
-      const k=fx.type==="attack"?(u<0.36?0:Math.sin(Math.min(1,(u-0.36)/0.4)*Math.PI)):Math.sin(Math.min(1,u*1.05)*Math.PI);
-      dx+=ux*amp*k; dy+=uy*amp*k;
+      if(fx.type==="push"&&slideLen>0.5){
+        const k=Math.sin(Math.min(1,u*1.05)*Math.PI);
+        dx+=slide.x*k; dy+=slide.y*k;
+      }else{
+        const amp=fx.type==="attack"?8:28;
+        const k=fx.type==="attack"?(u<0.36?0:Math.sin(Math.min(1,(u-0.36)/0.4)*Math.PI)):Math.sin(Math.min(1,u*1.05)*Math.PI);
+        dx+=ux*amp*k; dy+=uy*amp*k;
+      }
     }
   }
   return {dx, dy};
@@ -752,18 +767,19 @@ function fxDecor(name){
       out+=impactMark(k);
     }else{
       const a=fx.fromPos, b=fx.toPos;
-      const ang=a&&b?Math.atan2(b.y-a.y, b.x-a.x)*180/Math.PI:0;
+      const ang=fx.slide?Math.atan2(fx.slide.y, fx.slide.x)*180/Math.PI:(a&&b?Math.atan2(b.y-a.y, b.x-a.x)*180/Math.PI:0);
       out+=pushStreak(Math.sin(Math.min(1,u)*Math.PI), ang);
     }
   }
   return out;
 }
 function livesMark(n, y){
-  const v=clampLives(n); const c=v==null?3:v;
-  let s=`<g pointer-events="none"><title>${c} de 3 vidas</title>`;
-  for(let i=0;i<3;i++){
+  const max=maxLives();
+  const v=clampLives(n); const c=v==null?max:v;
+  let s=`<g pointer-events="none"><title>${c} de ${max} vidas</title>`;
+  for(let i=0;i<max;i++){
     const on=i<c;
-    s+=`<g transform="translate(${(i-1)*13},${y}) scale(2.2)"><path d="M0 2.4C0 2.4-3.1-.2-3.1-1.8A1.55 1.55 0 0 1 0-1.15 1.55 1.55 0 0 1 3.1-1.8C3.1-.2 0 2.4 0 2.4z" fill="${on?"#e0435a":"#fffaf3"}" stroke="${on?"#7a2430":"#c45c66"}" stroke-width=".9" stroke-linejoin="round"/></g>`;
+    s+=`<g transform="translate(${((i-(max-1)/2)*13).toFixed(1)},${y}) scale(2.2)"><path d="M0 2.4C0 2.4-3.1-.2-3.1-1.8A1.55 1.55 0 0 1 0-1.15 1.55 1.55 0 0 1 3.1-1.8C3.1-.2 0 2.4 0 2.4z" fill="${on?"#e0435a":"#fffaf3"}" stroke="${on?"#7a2430":"#c45c66"}" stroke-width=".9" stroke-linejoin="round"/></g>`;
   }
   return s+"</g>";
 }
