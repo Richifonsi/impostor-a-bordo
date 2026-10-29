@@ -10,7 +10,37 @@ h1{text-align:center;margin:14px;letter-spacing:2px}.wrap{display:grid;grid-temp
 button{background:#4a6cff;color:#fff;border:0;border-radius:10px;padding:8px 12px;margin:3px;cursor:pointer;font-weight:600}button.red{background:#e0435a}button.gray{background:#556}
 #log{height:240px;overflow:auto;font-size:13px;line-height:1.45}input{padding:8px;border-radius:8px;border:0;width:140px}
 .bar{height:10px;background:#333;border-radius:6px;overflow:hidden}.bar div{height:100%;background:#5fe08a}
-svg{position:absolute;inset:0;pointer-events:none}.big{font-size:22px;text-align:center;padding:10px}
+#lines{position:absolute;inset:0;pointer-events:none}.big{font-size:22px;text-align:center;padding:10px}
+svg.avatar{position:static;top:auto;right:auto;bottom:auto;left:auto;display:block;overflow:visible}
+.dots{display:flex;flex-wrap:nowrap;justify-content:center;align-items:flex-end;gap:1px;min-height:34px}
+.av-slot svg.avatar{filter:drop-shadow(0 1px 1px #000a)}
+.av-slot{display:inline-flex;flex:none;flex-direction:column;align-items:center;line-height:1;pointer-events:none}
+.av-slot.pending{opacity:0}
+.av-slot.pop{animation:popin .34s cubic-bezier(.2,.8,.2,1)}
+@keyframes popin{from{transform:scale(.35);opacity:0}to{transform:scale(1);opacity:1}}
+.av-slot i{font-style:normal;font-size:8px;font-weight:800;color:#ffd0d0;letter-spacing:.2px;text-shadow:0 1px 1px #000}
+.av-slot i.g{color:#d7f2ff}
+.me-line{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.me-line svg.avatar{width:62px;height:70px}
+.ghost-tag{color:#9cdcff;font-weight:800}
+.roster{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.roster-h{font-size:12px;font-weight:800;opacity:.8;margin-top:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#00000055;border:1px solid #ffffff2e;border-radius:999px;padding:2px 10px 2px 3px;max-width:100%}
+.chip svg.avatar{width:42px;height:48px;flex:none}
+.chip-txt{display:flex;flex-direction:column;min-width:0}
+.chip-txt b{font-size:13px;line-height:1.15}
+.chip-txt small{font-size:9px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#ffb4b4}
+.chip.ghost{background:#10283acc;border-color:#8ecfff}
+.chip.ghost small{color:#b7e4ff}
+.chip.dead{background:#3a1418cc;border-color:#e0435a}
+.chip.dead b,.chip.ghost b{text-decoration:line-through}
+button svg.avatar{display:inline-block;width:28px;height:32px;vertical-align:middle;margin-right:4px}
+#fx{position:absolute;inset:0;pointer-events:none;z-index:5;overflow:visible}
+.flyer{position:absolute;left:0;top:0;pointer-events:none;filter:drop-shadow(0 3px 2px #0008)}
+.eject{position:absolute;left:50%;top:36%;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 14px 10px;background:#140d0ce6;border:2px solid #ffd54a;border-radius:18px;animation:yeet 2.15s ease-in forwards;box-shadow:0 10px 30px #000c}
+.eject b{color:#fff;font-size:15px;text-shadow:0 2px 6px #000;text-align:center}
+@keyframes yeet{0%{opacity:0;transform:translate(-50%,-10%) scale(.7)}14%{opacity:1;transform:translate(-50%,-50%) scale(1)}70%{opacity:1;transform:translate(-50%,-78%) scale(1) rotate(-8deg)}100%{opacity:0;transform:translate(-50%,-160%) scale(.32) rotate(18deg)}}
+@media (prefers-reduced-motion:reduce){.av-slot.pop,.eject{animation:none}}
 </style>
 <h1>🚀 IMPOSTOR A BORDO</h1>
 <div class="wrap"><div class="card"><div id="map"><svg id="lines" width="100%" height="100%"></svg></div>
@@ -18,34 +48,180 @@ svg{position:absolute;inset:0;pointer-events:none}.big{font-size:22px;text-align
 <div><div class="card" id="panel"></div><div class="card" style="margin-top:12px"><b>Registro</b><div id="log"></div></div></div></div>
 <script>
 const POS={"Barra":[300,30],"Tostadora":[520,30],"Caja":[300,150],"Bodega de granos":[300,280],"Cuarto de máquinas":[110,280],"Cámaras":[60,170],"Terraza":[640,170],"Cocina":[520,300],"Molinos":[150,390],"Caldera de espresso":[10,390]};
-const COL=["#e0435a","#4a6cff","#5fe08a","#ffd54a","#c45cff","#ff8c3a","#3ad4ff","#ff7ad9","#aaa","#fff"];
+const COL=["#e0435a","#4a6cff","#5fe08a","#ffd54a","#c45cff","#ff8c3a","#3ad4ff","#ff7ad9","#b08968","#fff3e0"];
 let me=JSON.parse(localStorage.ib||"{}"),S=null;
+let CL={},lastRoom=null,lastPawnXY=null,hideSelfUntil=0,seenKeys=null,ejectCounts=null,flightId=0,svgSeq=0;
 async function post(o){const r=await (await fetch("/",{method:"POST",body:JSON.stringify(Object.assign({name:me.name,token:me.token},o))})).json();if(r.error)alert(r.error);if(r.token){me={name:o.name,token:r.token};localStorage.ib=JSON.stringify(me)}poll();return r}
 async function poll(){S=await (await fetch(`/state?name=${encodeURIComponent(me.name||"")}&token=${me.token||""}`)).json();draw()}
-function draw(){const m=document.getElementById("map"),M=S.me;m.querySelectorAll(".room").forEach(e=>e.remove());let ln="";
+function esc(s){return String(s).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
+function reduceMotion(){return !!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches)}
+function hexShift(hex,amt){const n=parseInt(hex.slice(1),16);const ch=v=>Math.max(0,Math.min(255,v+amt)).toString(16).padStart(2,"0");return "#"+ch(n>>16)+ch((n>>8)&255)+ch(n&255)}
+function luma(hex){const n=parseInt(hex.slice(1),16);return ((n>>16)*299+((n>>8)&255)*587+(n&255)*114)/1000}
+function hexMix(a,b,t){const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16);const ch=m=>Math.round((A>>m&255)*(1-t)+(B>>m&255)*t).toString(16).padStart(2,"0");return "#"+ch(16)+ch(8)+ch(0)}
+function fxLayer(){let el=document.getElementById("fx");if(!el){el=document.createElement("div");el.id="fx";document.getElementById("map").appendChild(el)}return el}
+function measurePawn(){const slot=document.querySelector("#map .av-slot.me-pawn");const map=document.getElementById("map");if(!slot||!map)return null;const svg=slot.querySelector("svg")||slot;const mb=map.getBoundingClientRect();const r=svg.getBoundingClientRect();return {x:r.left-mb.left,y:r.top-mb.top,sz:+(svg.getAttribute("width")||26),slot}}
+function capturePawn(){const b=measurePawn();if(b)lastPawnXY={x:b.x,y:b.y}}
+function decor(v,mark){
+if(v===1)return `<path d="M13 34.6h18M13 40.4h18" stroke="${mark}" stroke-width="2.3" stroke-linecap="round"/>`;
+if(v===2)return `<g fill="${mark}"><circle cx="15" cy="39" r="1.7"/><circle cx="22" cy="39" r="1.7"/><circle cx="29" cy="39" r="1.7"/></g>`;
+if(v===6)return `<path d="M30 33.2l1 2 2.2.2-1.6 1.4.5 2.1-2.1-1.2-2.1 1.2.5-2.1-1.6-1.4 2.2-.2z" fill="#fff6c2" stroke="#3a241c" stroke-width=".6"/>`;
+if(v===7)return `<path d="M13 39.2c2.4 1.8 3.4-1.8 5.6 0s3.2-1.8 5.6 0 3.2-1.8 5.8 0" fill="none" stroke="${mark}" stroke-width="1.6" stroke-linecap="round"/>`;
+return "";
+}
+function avatarSVG(name,mode,px){
+const players=(S&&S.players)||[];
+let idx=players.findIndex(p=>p.name===name);if(idx<0)idx=0;
+const c=CL[name]||COL[idx%COL.length]||"#b08968";
+const v=idx%8,ghost=mode==="ghost",dead=mode==="dead";
+const dark=luma(c)>200?"#6d4c41":hexShift(c,-52);
+const lite=hexShift(c,42);
+const ink="#3a241c";
+const mark=luma(c)>170?"rgba(58,36,28,.55)":"rgba(255,255,255,.8)";
+const fill=ghost?hexMix(c,"#d7f3ff",.55):c;
+const uid="c"+(++svgSeq);
+const h=Math.round(px*54/48);
+const label=dead?`Cuerpo de ${name}`:ghost?`Fantasma de ${name}`:`Avatar de ${name}`;
+const hand=v===5?"M10 27C2.2 27 2.2 38 10 38":"M34 27C41.8 27 41.8 38 34 38";
+const p=[];
+p.push(`<defs><linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${lite}"/><stop offset=".48" stop-color="${fill}"/><stop offset="1" stop-color="${dark}"/></linearGradient></defs>`);
+if(dead){p.push(`<ellipse cx="26" cy="53" rx="13" ry="3.4" fill="#4e261e" opacity=".9"/>`);p.push(`<ellipse cx="15" cy="52.2" rx="4.5" ry="2" fill="#6d3428"/>`);p.push(`<circle cx="36" cy="50.5" r="1.5" fill="#6d3428"/>`)}
+else if(!ghost)p.push(`<ellipse cx="22" cy="51" rx="9" ry="2" fill="#000" opacity=".22"/>`);
+p.push(`<g transform="${dead?"rotate(-26 22 34)":""}">`);
+if(!dead&&!ghost){p.push(`<path d="M16 13c1.4-2.4-.7-3.4.3-6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity=".8"/>`);p.push(`<path d="M26 12c1.5-2.6-.8-3.8.2-6.4" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity=".6"/>`)}
+if(ghost){p.push(`<ellipse cx="22" cy="7" rx="7.2" ry="2.5" fill="none" stroke="#ffe7a3" stroke-width="1.7"/>`);p.push(`<ellipse cx="22" cy="7" rx="2" ry=".85" fill="#ffe7a3"/>`);p.push(`<ellipse cx="22" cy="32" rx="15" ry="15" fill="#e8f7ff" opacity=".3"/>`)}
+if(v===4&&!dead){p.push(`<circle cx="16" cy="13" r="4.3" fill="#fffaf3" stroke="${ink}" stroke-width="1.3"/>`);p.push(`<circle cx="25" cy="11.2" r="4.8" fill="#fff" stroke="${ink}" stroke-width="1.3"/>`);p.push(`<circle cx="21" cy="15.2" r="3.4" fill="#fff7ee" stroke="${ink}" stroke-width="1.2"/>`)}
+if(v===3&&!dead){p.push(`<rect x="29.5" y="5" width="2.8" height="13" rx="1.2" fill="${lite}" stroke="${ink}" stroke-width="1"/>`);p.push(`<rect x="11" y="14.5" width="22" height="3.4" rx="1.5" fill="${dark}" stroke="${ink}" stroke-width="1"/>`)}
+p.push(`<rect x="10" y="20" width="24" height="25" rx="8" fill="url(#${uid})"${ghost?' opacity=".8"':""}/>`);
+p.push(`<rect x="10" y="20" width="24" height="25" rx="8" fill="none" stroke="${ghost?"#e7f6ff":ink}" stroke-width="1.8"/>`);
+p.push(`<ellipse cx="22" cy="20" rx="12" ry="4.7" fill="#fffaf3" stroke="${ink}" stroke-width="1.5"/>`);
+p.push(`<ellipse cx="22" cy="20.5" rx="7.4" ry="2.35" fill="#5c3317"/>`);
+p.push(`<path d="M18.4 20.2c1.8-1.7 4.2-1 4.6.6" fill="none" stroke="#f4e2cb" stroke-width="1.2" stroke-linecap="round"/>`);
+p.push(`<ellipse cx="13.4" cy="30" rx="1.5" ry="4" fill="#fff" opacity=".22"/>`);
+p.push(`<rect x="11.2" y="36.6" width="21.6" height="5" rx="2" fill="${dark}"/>`);
+p.push(decor(v,mark));
+if(dead){p.push(`<path d="M14.2 26.2l4.4 4.4m0-4.4l-4.4 4.4M25.2 26.2l4.4 4.4m0-4.4l-4.4 4.4" stroke="${ink}" stroke-width="1.7" stroke-linecap="round"/>`);p.push(`<path d="M17.5 33.2h9" stroke="${ink}" stroke-width="1.5" stroke-linecap="round"/>`);p.push(`<path d="M20 22.5l2.4 3.2-1.6 2.6" fill="none" stroke="${ink}" stroke-width="1.15" stroke-linecap="round"/>`)}
+else if(ghost){p.push(`<ellipse cx="16.4" cy="28.2" rx="2.6" ry="3.1" fill="#fff" opacity=".92"/>`);p.push(`<ellipse cx="27.6" cy="28.2" rx="2.6" ry="3.1" fill="#fff" opacity=".92"/>`);p.push(`<ellipse cx="16.8" cy="28.6" rx="1.15" ry="1.45" fill="#245066"/>`);p.push(`<ellipse cx="28" cy="28.6" rx="1.15" ry="1.45" fill="#245066"/>`);p.push(`<ellipse cx="22" cy="33.4" rx="1.5" ry="1.9" fill="${ink}" opacity=".4"/>`)}
+else{p.push(`<ellipse cx="16.2" cy="28.2" rx="3.05" ry="3.35" fill="#fff"/>`);p.push(`<ellipse cx="27.8" cy="28.2" rx="3.05" ry="3.35" fill="#fff"/>`);p.push(`<ellipse cx="17.1" cy="28.7" rx="1.5" ry="1.7" fill="${ink}"/>`);p.push(`<ellipse cx="28.7" cy="28.7" rx="1.5" ry="1.7" fill="${ink}"/>`);p.push(`<circle cx="15.6" cy="27.3" r=".75" fill="#fff"/>`);p.push(`<circle cx="27.2" cy="27.3" r=".75" fill="#fff"/>`);p.push(`<ellipse cx="12.2" cy="31.2" rx="1.6" ry=".95" fill="#ff8fa3" opacity=".8"/>`);p.push(`<ellipse cx="31.8" cy="31.2" rx="1.6" ry=".95" fill="#ff8fa3" opacity=".8"/>`);p.push(`<path d="M18 33q4 3.1 8 0" fill="none" stroke="${ink}" stroke-width="1.35" stroke-linecap="round"/>`)}
+p.push(`<path d="${hand}" fill="none" stroke="${ink}" stroke-width="4.4" stroke-linecap="round"/>`);
+p.push(`<path d="${hand}" fill="none" stroke="${ghost?"#f5fbff":fill}" stroke-width="2.5" stroke-linecap="round"/>`);
+if(!dead&&!ghost){p.push(`<rect x="14" y="44.4" width="6.2" height="4.8" rx="1.7" fill="${ink}"/>`);p.push(`<rect x="23.8" y="44.4" width="6.2" height="4.8" rx="1.7" fill="${ink}"/>`);p.push(`<rect x="14" y="44.4" width="6.2" height="1.8" rx="1" fill="${lite}"/>`);p.push(`<rect x="23.8" y="44.4" width="6.2" height="1.8" rx="1" fill="${lite}"/>`)}
+else if(ghost)p.push(`<path d="M13.5 45.5q3.2 4.2 6.4 0t6.4 0t6.4 0" fill="none" stroke="${fill}" stroke-width="2.1" stroke-linecap="round"/>`);
+p.push(`</g>`);
+return `<svg class="avatar ${mode}" width="${px}" height="${h}" viewBox="0 2 48 54" role="img" aria-label="${esc(label)}">${p.join("")}</svg>`;
+}
+function chip(name,mode){
+const c=CL[name]||"#fff";
+const tag=mode==="dead"?"cuerpo":mode==="ghost"?"fantasma":"";
+return `<span class="chip ${mode}">${avatarSVG(name,mode,36)}<span class="chip-txt"><b style="color:${c}">${esc(name)}</b>${tag?`<small>${tag}</small>`:""}</span></span>`;
+}
+function roomRoster(M){
+const meMode=M.alive?"live":"ghost";
+let s=`<div class=roster-h>En esta sala</div><div class=roster>${chip(M.name,meMode)}${(M.here||[]).map(n=>chip(n,"live")).join("")}</div>`;
+if((M.bodies||[]).length)s+=`<div class=roster-h>Cuerpos</div><div class=roster>${M.bodies.map(n=>chip(n,"dead")).join("")}</div>`;
+return s;
+}
+function ghostRoster(){
+const dead=(S.players||[]).filter(p=>!p.alive);
+if(!dead.length)return "";
+return `<div class=roster-h>Fantasmas</div><div class=roster>${dead.map(p=>chip(p.name,"ghost")).join("")}</div>`;
+}
+function roomFaces(M){
+const people=[{key:"me",name:M.name,mode:M.alive?"live":"ghost",me:1}];
+for(const n of (M.here||[]))people.push({key:"p:"+n,name:n,mode:"live"});
+for(const n of (M.bodies||[]))people.push({key:"b:"+n,name:n,mode:"dead"});
+const first=seenKeys===null,prev=seenKeys||new Set(),next=new Set();
+const sz=people.length>=4?26:people.length===3?32:people.length===2?36:40;
+const html=people.map(p=>{
+next.add(p.key);
+const pop=!first&&!p.me&&!prev.has(p.key)&&!reduceMotion();
+const pending=!!(p.me&&performance.now()<hideSelfUntil);
+const cls=["av-slot",p.mode,p.me?"me-pawn":"",pending?"pending":"",pop?"pop":""].filter(Boolean).join(" ");
+const cap=p.mode==="dead"?"<i>cuerpo</i>":p.mode==="ghost"?"<i class=g>fantasma</i>":"";
+return `<span class="${cls}">${avatarSVG(p.name,p.mode,sz)}${cap}</span>`;
+}).join("");
+seenKeys=next;return html;
+}
+function launchFlyer(name,mode,start,dest,sz){
+const layer=fxLayer();
+const el=document.createElement("div");
+el.className="flyer";
+el.style.transform=`translate(${start.x}px,${start.y}px)`;
+el.innerHTML=avatarSVG(name,mode,sz);
+layer.appendChild(el);
+const x0=start.x,y0=start.y,x1=dest.x,y1=dest.y,xm=(x0+x1)/2,ym=Math.min(y0,y1)-36;
+const myId=++flightId;
+const finish=()=>{if(el.parentNode)el.remove();if(myId!==flightId)return;hideSelfUntil=0;document.querySelectorAll("#map .av-slot.pending").forEach(s=>s.classList.remove("pending"))};
+try{
+const anim=el.animate([
+{transform:`translate(${x0}px,${y0}px) scale(1)`},
+{transform:`translate(${xm}px,${ym}px) scale(1.16)`,offset:.42},
+{transform:`translate(${x1}px,${y1+2}px) scale(1.08,.88)`,offset:.84},
+{transform:`translate(${x1}px,${y1}px) scale(1)`}
+],{duration:700,easing:"cubic-bezier(.22,.72,.2,1)",fill:"forwards"});
+anim.onfinish=finish;
+}catch(e){finish()}
+setTimeout(finish,1100);
+}
+function flyToSlot(M){
+const b=measurePawn();
+if(!b||!lastPawnXY){hideSelfUntil=0;if(b)b.slot.classList.remove("pending");return}
+const dest={x:b.x,y:b.y};
+if(Math.hypot(dest.x-lastPawnXY.x,dest.y-lastPawnXY.y)<8){hideSelfUntil=0;b.slot.classList.remove("pending");return}
+launchFlyer(M.name,M.alive?"live":"ghost",lastPawnXY,dest,b.sz);
+}
+function showEject(name){
+const layer=fxLayer();
+const el=document.createElement("div");
+el.className="eject";
+el.innerHTML=`${avatarSVG(name,"live",68)}<b>¡${esc(name)} fue expulsado!</b>`;
+layer.appendChild(el);
+setTimeout(()=>{if(el.parentNode)el.remove()},2300);
+}
+function trackEject(){
+const lines=S.log||[],counts=new Map();
+for(const line of lines)counts.set(line,(counts.get(line)||0)+1);
+if(S.phase!=="lobby"&&ejectCounts){
+for(const [line,n] of counts){
+const old=ejectCounts.get(line)||0;
+if(n<=old)continue;
+const m=/^(.+?) fue expulsado al espacio/.exec(line);
+if(m)for(let k=old;k<n;k++)showEject(m[1]);
+}}
+ejectCounts=counts;
+}
+function draw(){const m=document.getElementById("map"),M=S.me;
+capturePawn();
+const moved=!!(M&&lastRoom&&lastRoom!==M.room&&lastPawnXY&&POS[M.room]&&!reduceMotion());
+if(moved)hideSelfUntil=performance.now()+900;
+if(!M){seenKeys=null;lastRoom=null;lastPawnXY=null;hideSelfUntil=0;const fx=document.getElementById("fx");if(fx)fx.replaceChildren()}
+m.querySelectorAll(".room").forEach(e=>e.remove());let ln="";
 for(const[a,bs]of Object.entries(S.map))for(const b of bs){const[x1,y1]=POS[a],[x2,y2]=POS[b];ln+=`<line x1=${x1+59} y1=${y1+35} x2=${x2+59} y2=${y2+35} stroke="#4a5f9e55" stroke-width=3 />`}
 document.getElementById("lines").innerHTML=ln;
-const cl={};S.players.forEach((p,i)=>cl[p.name]=COL[i%10]);
+CL={};S.players.forEach((p,i)=>CL[p.name]=COL[i%COL.length]);const cl=CL;
 for(const r in POS){const d=document.createElement("div");d.className="room";d.style.left=POS[r][0]+"px";d.style.top=POS[r][1]+"px";let dots="";
-if(M){if(M.room==r){d.classList.add("me");dots=[M.name,...M.here].map(n=>`<span style="background:${cl[n]}" title="${n}"></span>`).join("")+M.bodies.map(n=>"💀").join("")}
+if(M){if(M.room==r){d.classList.add("me");dots=roomFaces(M)}
 if(M.exits.includes(r)&&S.phase=="play"){d.classList.add("ex");d.onclick=()=>post({action:"move",target:r})}
 if(M.tasks.includes(r))d.classList.add("task");if(M.vent==r){d.style.borderStyle="dashed";d.onclick=()=>post({action:"vent"})}}
 d.innerHTML=`<b>${r}</b><div class=dots>${dots}</div>`;m.appendChild(d)}
+if(moved)flyToSlot(M);
+if(M)lastRoom=M.room;
 const[dn,t]=S.progress;document.getElementById("prog").style.width=(t?dn/t*100:0)+"%";
 document.getElementById("log").innerHTML=S.log.map(x=>`<div>${x}</div>`).join("");document.getElementById("log").scrollTop=1e9;
 let h="";if(!M){h=`<b>Únete</b><br><input id=n placeholder="Tu nombre"><button onclick="post({action:'join',name:n.value})">Entrar</button>`}
-else{h=`<div>Hola <b style="color:${cl[M.name]}">${M.name}</b> ${M.alive?"":"👻"}</div>`;
-if(S.phase=="lobby")h+=`<p>Jugadores: ${S.players.map(p=>p.name).join(", ")}</p><button onclick="post({action:'start'})">Empezar partida</button>`;
-else{h+=`<div class=big style="color:${M.role=="impostor"?"#e0435a":"#5fe08a"}">${M.role=="impostor"?"🔪 IMPOSTOR":"🧑‍🚀 TRIPULANTE"}</div><div>Estás en <b>${M.room}</b></div>`;
+else{h=`<div class=me-line>${avatarSVG(M.name,M.alive?"live":"ghost",52)}<div>Hola <b style="color:${cl[M.name]}">${esc(M.name)}</b>${M.alive?"":" <small class=ghost-tag>fantasma</small>"}</div></div>`;
+if(S.phase=="lobby")h+=`<div class=roster-h>Jugadores</div><div class=roster>${S.players.map(p=>chip(p.name,"live")).join("")}</div><button onclick="post({action:'start'})">Empezar partida</button>`;
+else{h+=`<div class=big style="color:${M.role=="impostor"?"#e0435a":"#5fe08a"}">${M.role=="impostor"?"🔪 IMPOSTOR":"🧑‍🚀 TRIPULANTE"}</div><div>Estás en <b>${esc(M.room)}</b></div>${roomRoster(M)}`;
 if(M.role=="tripulante")h+=`<div>Tareas: ${M.tasks.join(", ")||"¡listas!"}</div>`;
 if(S.phase=="play"){if(M.tasks.includes(M.room)||M.role=="impostor")h+=`<button onclick="post({action:'task'})">Hacer tarea</button>`;
-if(M.alive){if(M.role=="impostor")M.here.forEach(n=>h+=`<button class=red onclick="post({action:'kill',target:'${n}'})">Matar a ${n}</button>`)+(M.cd?`<div>Enfriamiento: ${M.cd}</div>`:"");
+if(M.alive){if(M.role=="impostor")M.here.forEach(n=>h+=`<button class=red onclick="post({action:'kill',target:'${n}'})">${avatarSVG(n,"live",20)} Matar a ${esc(n)}</button>`)+(M.cd?`<div>Enfriamiento: ${M.cd}</div>`:"");
 if(M.bodies.length)h+=`<button class=red onclick="post({action:'report'})">Reportar cuerpo</button>`;h+=`<button class=gray onclick="post({action:'meeting'})">🚨 Emergencia</button>`}
 h+=`<p style="font-size:12px">Haz clic en una sala con borde verde para moverte.</p>`}
 if(S.phase=="meeting"){h+=`<h3>🗳️ Reunión</h3><input id=c placeholder="Di algo"><button onclick="post({action:'chat',text:c.value})">Hablar</button><br>`;
-if(M.alive)S.players.filter(p=>p.alive).forEach(p=>h+=`<button onclick="post({action:'vote',target:'${p.name}'})">${p.name}${p.voted?" ✔":""}</button>`)+(h+=`<button class=gray onclick="post({action:'vote',target:'skip'})">Saltar</button>`)}
-if(S.phase=="end")h+=`<div class=big>${S.winner}</div>`}
+if(M.alive){S.players.filter(p=>p.alive).forEach(p=>h+=`<button onclick="post({action:'vote',target:'${p.name}'})">${avatarSVG(p.name,"live",22)} ${esc(p.name)}${p.voted?" ✔":""}</button>`);h+=`<button class=gray onclick="post({action:'vote',target:'skip'})">Saltar</button>`}
+else h+=`<p>Los fantasmas no votan.</p><div class=roster>${S.players.filter(p=>p.alive).map(p=>chip(p.name,"live")).join("")}</div>`}
+if(S.phase=="end")h+=`<div class=big>${S.winner}</div><div class=roster-h>Tripulación</div><div class=roster>${S.players.map(p=>chip(p.name,p.alive?"live":"ghost")).join("")}</div>`;
+else h+=ghostRoster()}
 h+=`<p><button class=gray onclick="if(confirm('¿Reiniciar la partida para todos?')){localStorage.ib='{}';me={};post({action:'reset'})}">Nueva partida</button></p>`}
-document.getElementById("panel").innerHTML=h}
+document.getElementById("panel").innerHTML=h;trackEject()}
 poll();setInterval(()=>{if(!document.activeElement||document.activeElement.tagName!="INPUT")poll()},2000);
 </script></html>
