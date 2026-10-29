@@ -1,6 +1,7 @@
 /* Efectos de Impostor a Bordo, sintetizados con Web Audio API (sin archivos).
-   El AudioContext solo se crea tras un gesto del usuario.
-   El silencio persiste en localStorage["ib-muted"]. */
+   El AudioContext solo se crea tras un gesto (clic, toque o tecla) y se
+   reanuda en cada gesto, también en móvil. El silencio, el volumen y la
+   música quedan en localStorage (ib-muted, ib-volume, ib-music). */
 (function (root) {
   "use strict";
 
@@ -158,12 +159,12 @@
   }
 
   function playMeeting(ctx, dest, t) {
-    osc(ctx, dest, "sawtooth", 146.83, t, 1.15, 0.05, 123.47);
+    osc(ctx, dest, "sawtooth", 146.83, t, 1.15, 0.08, 123.47);
     var notes = [493.88, 369.99];
     var end = t;
     for (var i = 0; i < 6; i++) {
       var start = t + i * 0.18;
-      osc(ctx, dest, "square", notes[i % 2], start, 0.14, 0.13);
+      osc(ctx, dest, "square", notes[i % 2], start, 0.14, 0.2);
       end = start + 0.16;
     }
     return end;
@@ -177,10 +178,10 @@
   }
 
   function playTask(ctx, dest, t) {
-    osc(ctx, dest, "sine", 783.99, t, 0.11, 0.18);
-    osc(ctx, dest, "sine", 1174.66, t + 0.08, 0.16, 0.16);
-    osc(ctx, dest, "triangle", 1567.98, t + 0.16, 0.12, 0.07);
-    return t + 0.3;
+    osc(ctx, dest, "sine", 783.99, t, 0.12, 0.24);
+    osc(ctx, dest, "sine", 1174.66, t + 0.09, 0.18, 0.2);
+    osc(ctx, dest, "triangle", 1567.98, t + 0.16, 0.14, 0.1);
+    return t + 0.32;
   }
 
   function playCrew(ctx, dest, t) {
@@ -237,9 +238,25 @@
 
   var ctx = null;
   var master = null;
+  var musicBus = null;
   var last = null;
   var muted = false;
-  var ready = Promise.resolve(false);
+  var unlocked = false;
+  var volume = 80;
+  var musicOn = false;
+  var musicTimer = null;
+  var musicLive = [];
+  var nextNote = 0;
+  var chordStep = 0;
+  var VOL_KEY = "ib-volume";
+  var MUSIC_KEY = "ib-music";
+  var CAFE = [
+    [130.81, 164.81, 196.00, 246.94],
+    [110.00, 130.81, 164.81, 196.00],
+    [174.61, 220.00, 261.63, 329.63],
+    [98.00, 123.47, 146.83, 174.61]
+  ];
+  var CHORD = 3.6;
 
   function readMuted() {
     try { return localStorage.getItem(MUTE_KEY) === "1"; }
@@ -249,39 +266,87 @@
     try { localStorage.setItem(MUTE_KEY, v ? "1" : "0"); }
     catch (e) {}
   }
+  function clampVolume(v) {
+    var n = parseInt(v, 10);
+    if (isNaN(n)) return 80;
+    if (n < 0) return 0;
+    if (n > 100) return 100;
+    return n;
+  }
+  function readVolume() {
+    try {
+      var raw = localStorage.getItem(VOL_KEY);
+      if (raw == null || raw === "") return 80;
+      return clampVolume(raw);
+    } catch (e) { return 80; }
+  }
+  function writeVolume(v) {
+    try { localStorage.setItem(VOL_KEY, String(v)); }
+    catch (e) {}
+  }
+  function readMusic() {
+    try { return localStorage.getItem(MUSIC_KEY) === "1"; }
+    catch (e) { return false; }
+  }
+  function writeMusic(v) {
+    try { localStorage.setItem(MUSIC_KEY, v ? "1" : "0"); }
+    catch (e) {}
+  }
   muted = readMuted();
+  volume = readVolume();
+  musicOn = readMusic();
+
+  function level() {
+    if (muted || volume <= 0) return 0;
+    return volume / 100;
+  }
 
   function applyGain() {
     if (!master || !ctx) return;
     var now = ctx.currentTime;
     master.gain.cancelScheduledValues(now);
-    master.gain.setValueAtTime(muted ? 0 : 0.5, now);
+    master.gain.setValueAtTime(level(), now);
   }
 
-  function unlock() {
+  function ensure() {
     var AC = root.AudioContext || root.webkitAudioContext;
-    if (!AC) {
-      ready = Promise.resolve(false);
-      return;
-    }
+    if (!AC) return null;
     if (!ctx) {
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.setValueAtTime(muted ? 0 : 0.5, ctx.currentTime);
+      master.gain.setValueAtTime(level(), ctx.currentTime);
       master.connect(ctx.destination);
+      musicBus = ctx.createGain();
+      musicBus.gain.setValueAtTime(0.6, ctx.currentTime);
+      musicBus.connect(master);
     }
-    ready = ctx.resume().then(function () { return ctx.state === "running"; }).catch(function () { return false; });
+    return ctx;
   }
 
-  function onGesture() {
-    unlock();
-    ready.then(function (ok) {
-      if (!ok) return;
-      document.removeEventListener("pointerdown", onGesture, true);
-      document.removeEventListener("keydown", onGesture, true);
-      document.removeEventListener("touchstart", onGesture, true);
-    });
+  /* Un búfer en silencio dentro del gesto desbloquea Safari/iOS, donde
+     resume() a veces no basta y el contexto vuelve a suspended. */
+  function kick(c) {
+    try {
+      var frames = Math.max(1, Math.floor(c.sampleRate * 0.05));
+      var buf = c.createBuffer(1, frames, c.sampleRate);
+      var src = c.createBufferSource();
+      src.buffer = buf;
+      src.connect(c.destination);
+      src.start(0);
+    } catch (e) {}
   }
+
+  function unlock() {
+    var c = ensure();
+    if (!c) return;
+    var pending = c.resume();
+    if (pending && pending.catch) pending.catch(function () {});
+    if (!unlocked || c.state !== "running") kick(c);
+    unlocked = true;
+    if (musicOn) armMusic();
+  }
+
+  function onGesture() { unlock(); }
 
   function emit(id) {
     if (root.__IB_SOUND_TEST__) {
@@ -291,18 +356,118 @@
   }
 
   function playAll(events) {
-    if (!events.length || muted || !ctx) return;
-    var ticket = ready;
-    ticket.then(function (ok) {
-      try {
-        if (!ok || muted || !ctx || ctx.state !== "running") return;
-        schedule(ctx, master, events, ctx.currentTime);
-        for (var i = 0; i < events.length; i++) {
-          var ev = events[i];
-          emit(ev.id === "vote" && ev.ejected === false ? "vote-skip" : ev.id);
-        }
-      } catch (e) {}
-    });
+    if (!events.length || muted || volume <= 0 || !unlocked || !ctx) return;
+    try {
+      if (ctx.state !== "running") {
+        var pending = ctx.resume();
+        if (pending && pending.catch) pending.catch(function () {});
+      }
+      /* Se programa aunque el contexto aún esté suspended: si resume()
+         termina un instante después, el sonido no se pierde. */
+      schedule(ctx, master, events, ctx.currentTime + 0.02);
+      for (var i = 0; i < events.length; i++) {
+        var ev = events[i];
+        emit(ev.id === "vote" && ev.ejected === false ? "vote-skip" : ev.id);
+      }
+    } catch (e) {}
+  }
+
+  function trackNode(node, end) {
+    musicLive.push({ node: node, end: end });
+    if (musicLive.length < 40) return;
+    var now = ctx.currentTime;
+    var keep = [];
+    for (var i = 0; i < musicLive.length; i++) {
+      if (musicLive[i].end > now - 0.2) keep.push(musicLive[i]);
+    }
+    musicLive = keep;
+  }
+
+  function softPad(freq, t, dur, peak) {
+    var o = ctx.createOscillator();
+    var g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(freq, t);
+    o.connect(g);
+    g.connect(musicBus);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+    trackNode(o, t + dur + 0.05);
+  }
+
+  function roomBed(t, dur) {
+    var frames = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    var buf = ctx.createBuffer(1, frames, ctx.sampleRate);
+    var data = buf.getChannelData(0);
+    for (var i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+    var src = ctx.createBufferSource();
+    src.buffer = buf;
+    var filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(700, t);
+    filter.Q.setValueAtTime(0.6, t);
+    var g = ctx.createGain();
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(musicBus);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.02, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.start(t);
+    src.stop(t + dur + 0.05);
+    trackNode(src, t + dur + 0.05);
+  }
+
+  function cupTick(t) {
+    var o = ctx.createOscillator();
+    var g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(1318.5, t);
+    o.frequency.exponentialRampToValueAtTime(880, t + 0.12);
+    o.connect(g);
+    g.connect(musicBus);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.035, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+    o.start(t);
+    o.stop(t + 0.16);
+    trackNode(o, t + 0.16);
+  }
+
+  function pumpMusic() {
+    if (!ctx || !musicOn || !musicBus) return;
+    var horizon = ctx.currentTime + 1.4;
+    if (!nextNote || nextNote < ctx.currentTime) nextNote = ctx.currentTime + 0.06;
+    while (nextNote < horizon) {
+      var chord = CAFE[chordStep % CAFE.length];
+      chordStep += 1;
+      for (var i = 0; i < chord.length; i++) softPad(chord[i], nextNote, CHORD + 0.45, 0.05);
+      roomBed(nextNote, CHORD + 0.3);
+      cupTick(nextNote + 1.6);
+      nextNote += CHORD;
+    }
+  }
+
+  function armMusic() {
+    if (!ctx || !musicOn || musicTimer) return;
+    nextNote = 0;
+    musicTimer = setInterval(pumpMusic, 250);
+    pumpMusic();
+  }
+
+  function stopMusic() {
+    if (musicTimer) {
+      clearInterval(musicTimer);
+      musicTimer = null;
+    }
+    for (var i = 0; i < musicLive.length; i++) {
+      try { musicLive[i].node.stop(); } catch (e) {}
+    }
+    musicLive = [];
+    nextNote = 0;
   }
 
   function fingerprint(snap) {
@@ -324,8 +489,32 @@
     } catch (e) {}
   }
 
-  function label() {
+  function muteLabel() {
     return muted ? "🔇 Silencio" : "🔊 Sonido";
+  }
+  function musicLabel() {
+    return musicOn ? "🎵 Café" : "🎵 Música";
+  }
+
+  function paintControls() {
+    var btn = document.getElementById("ib-mute");
+    var music = document.getElementById("ib-music");
+    var range = document.getElementById("ib-volume");
+    var num = document.getElementById("ib-volume-n");
+    if (btn) {
+      btn.textContent = muteLabel();
+      btn.title = muted ? "Activar sonido" : "Silenciar";
+      btn.setAttribute("aria-label", btn.title);
+      btn.setAttribute("aria-pressed", muted ? "true" : "false");
+    }
+    if (music) {
+      music.textContent = musicLabel();
+      music.title = musicOn ? "Quitar la música de fondo" : "Poner música de cafetería";
+      music.setAttribute("aria-label", music.title);
+      music.setAttribute("aria-pressed", musicOn ? "true" : "false");
+    }
+    if (range && String(range.value) !== String(volume)) range.value = String(volume);
+    if (num) num.textContent = String(volume);
   }
 
   function mount() {
@@ -333,43 +522,107 @@
       document.addEventListener("DOMContentLoaded", mount);
       return;
     }
-    if (document.getElementById("ib-mute")) return;
-    var style = document.createElement("style");
-    style.textContent = "#ib-mute{margin:6px 0}";
-    document.head.appendChild(style);
+    if (document.getElementById("ib-audio")) {
+      paintControls();
+      return;
+    }
+    if (!document.getElementById("ib-audio-style")) {
+      var style = document.createElement("style");
+      style.id = "ib-audio-style";
+      style.textContent = "#ib-audio{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 0;padding:8px 10px;border-radius:16px}#ib-audio button{margin:0}#ib-vol{display:inline-flex;align-items:center;gap:8px;margin:0;padding:6px 10px;font-size:13px;font-weight:700}#ib-volume{width:96px;margin:0;accent-color:var(--amber-deep,#b8752a)}#ib-volume-n{min-width:1.6em;text-align:right}";
+      document.head.appendChild(style);
+    }
+    var box = document.createElement("div");
+    box.id = "ib-audio";
+    box.className = "glass";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "Sonido");
+
     var btn = document.createElement("button");
     btn.id = "ib-mute";
     btn.type = "button";
-    btn.textContent = label();
-    btn.setAttribute("aria-pressed", muted ? "true" : "false");
-    btn.title = muted ? "Activar sonido" : "Silenciar";
-    btn.setAttribute("aria-label", btn.title);
+    btn.className = "chip";
     btn.addEventListener("click", function () {
       muted = !muted;
       writeMuted(muted);
       applyGain();
-      btn.textContent = label();
-      btn.title = muted ? "Activar sonido" : "Silenciar";
-      btn.setAttribute("aria-label", btn.title);
-      btn.setAttribute("aria-pressed", muted ? "true" : "false");
+      paintControls();
     });
+
+    var vol = document.createElement("label");
+    vol.id = "ib-vol";
+    vol.className = "glass-inset";
+    vol.setAttribute("for", "ib-volume");
+    var volName = document.createElement("span");
+    volName.textContent = "Volumen";
+    var range = document.createElement("input");
+    range.id = "ib-volume";
+    range.type = "range";
+    range.min = "0";
+    range.max = "100";
+    range.step = "1";
+    range.value = String(volume);
+    range.setAttribute("aria-label", "Volumen");
+    range.addEventListener("input", function () {
+      volume = clampVolume(range.value);
+      writeVolume(volume);
+      applyGain();
+      paintControls();
+    });
+    var num = document.createElement("span");
+    num.id = "ib-volume-n";
+    vol.appendChild(volName);
+    vol.appendChild(range);
+    vol.appendChild(num);
+
+    var music = document.createElement("button");
+    music.id = "ib-music";
+    music.type = "button";
+    music.className = "chip";
+    music.addEventListener("click", function () {
+      musicOn = !musicOn;
+      writeMusic(musicOn);
+      if (musicOn) armMusic();
+      else stopMusic();
+      paintControls();
+    });
+
+    box.appendChild(btn);
+    box.appendChild(vol);
+    box.appendChild(music);
+
     var bar = document.querySelector(".bar");
-    if (bar && bar.parentElement) bar.insertAdjacentElement("afterend", btn);
-    else document.body.appendChild(btn);
+    if (bar && bar.parentElement) bar.insertAdjacentElement("afterend", box);
+    else document.body.appendChild(box);
+    paintControls();
   }
 
   document.addEventListener("pointerdown", onGesture, true);
+  document.addEventListener("pointerup", onGesture, true);
+  document.addEventListener("click", onGesture, true);
   document.addEventListener("keydown", onGesture, true);
-  document.addEventListener("touchstart", onGesture, true);
-  mount();
+  document.addEventListener("touchstart", onGesture, { capture: true, passive: true });
+  document.addEventListener("touchend", onGesture, { capture: true, passive: true });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible" || !unlocked || !ctx) return;
+    if (ctx.state !== "running") {
+      var pending = ctx.resume();
+      if (pending && pending.catch) pending.catch(function () {});
+    }
+  });
 
   root.IBSound = {
     sync: sync,
     isMuted: function () { return muted; }
   };
+  try { mount(); } catch (e) {}
   if (root.__IB_SOUND_TEST__) {
     root.IBSound._reset = function () { last = null; };
     root.IBSound._unlock = unlock;
     root.IBSound._state = function () { return ctx ? ctx.state : "none"; };
+    root.IBSound._volume = function () { return volume; };
+    root.IBSound._music = function () { return musicOn; };
+    root.IBSound._level = function () { return master ? master.gain.value : level(); };
+    root.IBSound._suspend = function () { return ctx ? ctx.suspend() : Promise.resolve(); };
   }
 })(typeof window !== "undefined" ? window : globalThis);
