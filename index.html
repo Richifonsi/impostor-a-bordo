@@ -264,6 +264,14 @@ button svg.avatar{width:calc(22px * 1.3);height:calc(26px * 1.3);margin-right:4p
 .roster li.dead{background:rgba(163,59,50,.12);border-color:rgba(163,59,50,.35)}
 .roster li.dead b,.roster li.ghost b{text-decoration:line-through}
 .roster li.ghost small{color:var(--ink-soft)}
+.lives{display:inline-flex;align-items:center;gap:3px;margin-top:2px}
+.lives .heart{width:13px;height:12px;fill:#e0435a;stroke:#7a2430;stroke-width:.7;stroke-linejoin:round}
+.lives .heart.off{fill:#fffaf3;stroke:#b85a52}
+.mtg-ghost .lives .heart.off{fill:#f4ebe4;stroke:#8a534c}
+.lives-caption{display:block;margin-top:1px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft)}
+.me-line .lives{margin-top:3px}
+.mtg-id .lives{margin-top:4px}
+.mtg-id .lives .heart{width:14px;height:13px}
 #ib-mute{margin:8px 0 0}
 @media (max-width:1080px){
   .wrap{grid-template-columns:minmax(0,1fr);grid-template-areas:"mast" "map" "side";padding:12px;width:100%}
@@ -480,6 +488,7 @@ async function post(o){
     const r=await (await fetch("/",{method:"POST",body:JSON.stringify(Object.assign({name:me.name,token:me.token},o))})).json();
     if(r.error) uiAlert(r.error);
     if(r.token){me={name:o.name,token:r.token};localStorage.ib=JSON.stringify(me)}
+    if(!r.error&&act==="kill")queueFx("attack",me.name,o.target);
     await poll();
     return r;
   }finally{if(act==="move"||act==="vent")travelHint=null}
@@ -487,19 +496,43 @@ async function post(o){
 async function poll(){
   S=await (await fetch(`/state?name=${encodeURIComponent(me.name||"")}&token=${me.token||""}`)).json();
   try{if(window.IBSound)IBSound.sync(S)}catch(e){}
+  observeCombat();
   draw();
+}
+function whoName(x){return x&&typeof x==="object"?x.name:x}
+function maxLives(){const n=S&&S.rules&&Number(S.rules.lives);return Number.isFinite(n)&&n>0?Math.round(n):3}
+function clampLives(n){const v=Number(n);if(!Number.isFinite(v))return null;return Math.max(0,Math.min(maxLives(),Math.round(v)))}
+function livesOf(name,dead){
+  const max=maxLives();
+  if(!S||!name)return dead?0:max;
+  const p=(S.players||[]).find(x=>x.name===name);
+  if(p&&p.lives!=null){const v=clampLives(p.lives);if(v!=null)return v}
+  if(S.me&&S.me.name===name&&S.me.lives!=null){const v=clampLives(S.me.lives);if(v!=null)return v}
+  const pos=S.me&&S.me.positions;
+  if(pos){const row=pos.find(q=>q&&q.name===name);if(row&&row.lives!=null){const v=clampLives(row.lives);if(v!=null)return v}}
+  if(dead)return 0;
+  if(S.me&&S.me.name===name&&S.me.alive===false)return 0;
+  if(p&&S.phase!=="play"&&p.alive===false)return 0;
+  return max;
+}
+function livesHtml(n){
+  const max=maxLives();
+  const c=clampLives(n);const v=c==null?max:c;
+  let s=`<span class="lives" role="img" aria-label="${v} de ${max} vidas">`;
+  for(let i=0;i<max;i++)s+=`<svg class="heart${i<v?"":" off"}" viewBox="0 0 16 14" aria-hidden="true"><path d="M8 12.4S1.6 8.6 1.6 5.1A2.9 2.9 0 0 1 8 4.2a2.9 2.9 0 0 1 6.4.9c0 3.5-6.4 7.3-6.4 7.3z"/></svg>`;
+  return s+"</span>";
 }
 function chipLi(name,mode){
   const tag=mode==="dead"?"cuerpo":mode==="ghost"?"fantasma":"";
-  const row=(S.players||[]).find(p=>p.name===name);
-  const hearts=row&&row.lives!=null&&mode!=="dead"?`${row.lives} vidas`:"";
-  const sub=[tag,hearts].filter(Boolean).join(" · ");
-  return `<li class="cup-chip ${mode}">${avatarSVG(name,mode,36)}<span class="chip-txt"><b>${esc(name)}</b>${sub?`<small>${esc(sub)}</small>`:""}</span></li>`;
+  const dead=mode==="dead"||mode==="ghost";
+  return `<li class="cup-chip ${mode}">${avatarSVG(name,mode,36)}<span class="chip-txt"><b>${esc(name)}</b>${livesHtml(livesOf(name,dead))}${tag?`<small>${tag}</small>`:""}</span></li>`;
 }
 function roomRoster(M){
   const meMode=M.alive?"live":"ghost";
-  let s=`<div class="block"><span class="kicker">En esta sala</span><ul class="roster">${chipLi(M.name,meMode)}${(M.here||[]).map(n=>chipLi(n,"live")).join("")}</ul></div>`;
-  if((M.bodies||[]).length)s+=`<div class="block"><span class="kicker">Cuerpos</span><ul class="roster">${M.bodies.map(n=>chipLi(n,"dead")).join("")}</ul></div>`;
+  const hereNames=(M.here||[]).map(whoName).filter(Boolean);
+  const bodyNames=(M.bodies||[]).map(whoName).filter(Boolean);
+  let s=`<div class="block"><span class="kicker">En esta sala</span><ul class="roster">${chipLi(M.name,meMode)}${hereNames.map(n=>chipLi(n,"live")).join("")}</ul></div>`;
+  if(bodyNames.length)s+=`<div class="block"><span class="kicker">Cuerpos</span><ul class="roster">${bodyNames.map(n=>chipLi(n,"dead")).join("")}</ul></div>`;
   return s;
 }
 function draw(){
@@ -522,7 +555,7 @@ function draw(){
   if(!M){
     h=`<form class="join" aria-label="Unirse a la sala" onsubmit="event.preventDefault();post({action:'join',name:n.value})"><h2>Únete</h2><p class="hint">Escribe tu nombre. Todo el mundo entra a la misma sala.</p><label class="field"><span class="kicker">Nombre</span><input id="n" placeholder="Tu nombre" maxlength="20" autocomplete="off"></label><button class="btn btn-primary" type="submit">Entrar</button></form>`;
   }else{
-    h=`<div class="hello me-line">${avatarSVG(M.name,M.alive?"live":"ghost",52)}<div>Hola <b class="pname">${esc(M.name)}</b> ${M.alive?"":"👻"}</div></div>`;
+    h=`<div class="hello me-line">${avatarSVG(M.name,M.alive?"live":"ghost",52)}<div><div>Hola <b class="pname">${esc(M.name)}</b> ${M.alive?"":"👻"}</div>${livesHtml(livesOf(M.name,!M.alive))}<span class="lives-caption">Vidas</span></div></div>`;
     if(S.phase=="lobby"){
       h+=`<div class="block"><span class="kicker">Jugadores</span><ul class="roster">${S.players.map(p=>chipLi(p.name,"live")).join("")}</ul><button class="btn btn-primary" onclick="post({action:'start'})">Empezar partida</button><p class="hint">Hacen falta al menos 3 jugadores.</p></div>`;
     }else{
@@ -543,15 +576,15 @@ function draw(){
         h+=`<div class="actions">`;
         if((M.tasks||[]).includes(M.room)||imp)h+=`<button class="btn btn-primary" type="button" onclick="post({action:'task'})">Hacer tarea</button>`;
         if(M.alive){
-          if(imp)(M.here||[]).forEach(n=>{h+=`<button class="btn btn-danger red" type="button" onclick='post({action:"kill",target:${JSON.stringify(n)}})'>${avatarSVG(n,"live",20)} Atacar a ${esc(n)}</button>`});
-          (M.here||[]).forEach(n=>{h+=`<button class="btn btn-ghost gray" type="button" onclick='post({action:"push",target:${JSON.stringify(n)}})'>Empujar a ${esc(n)}</button>`});
+          if(imp)(M.here||[]).forEach(n=>{const name=whoName(n);if(!name)return;h+=`<button class="btn btn-danger red" type="button" onclick='post({action:"kill",target:${JSON.stringify(name)}})'>${avatarSVG(name,"live",20)} Atacar a ${esc(name)}</button>`});
+          (M.here||[]).forEach(n=>{const name=whoName(n);if(!name)return;h+=`<button class="btn btn-ghost gray" type="button" onclick='post({action:"push",target:${JSON.stringify(name)}})'>Empujar a ${esc(name)}</button>`});
           if((M.bodies||[]).length)h+=`<button class="btn btn-danger red" type="button" onclick="post({action:'report'})">Reportar cuerpo</button>`;
           h+=`<button class="btn btn-ghost gray" type="button" onclick="post({action:'meeting'})">🚨 Emergencia</button>`;
         }
         h+=`</div>`;
-        if(imp&&M.cd)h+=`<p class="cooldown">Enfriamiento: ${M.cd}</p>`;
-        if(M.alive&&M.push_cd)h+=`<p class="cooldown">Empuje: ${M.push_cd}</p>`;
-        h+=`<p class="hint">Haz clic en una sala con borde verde para moverte.</p>`;
+        if(imp&&M.cd)h+=`<p class="cooldown">Espera ${M.cd} acciones más</p>`;
+        if(M.alive&&M.push_cd)h+=`<p class="cooldown">Espera ${M.push_cd} acciones más para empujar</p>`;
+        h+=`<p class="hint">Toca un punto de tu sala para caminar. El borde verde y su pasillo llevan a una sala conectada.</p>`;
       }
       if(S.phase=="meeting")h+=`<p class="mtg-note">Reunión en curso: la votación está en la mesa.</p>`;
       if(S.phase=="end"){
@@ -680,9 +713,179 @@ const VENT_DRAW=[
   {a:"Terraza",b:"Cocina",pts:[[918,214],[918,292]],ga:[892,150],gb:[900,312],lx:948,ly:252}
 ];
 const HALL_LABELS=[{x:470,y:48,t:"cubierta"},{x:640,y:334,t:"pasillo",rot:-90},{x:640,y:706,t:"pasillo"},{x:490,y:820,t:"pasillo inferior"}];
+let combatFx=[], seenBodies=null, seenLives=null, seenLog=null, seenEvt=null, seenPushId=null;
+function attackLunge(u){if(u<0.28)return Math.sin(u/0.28*Math.PI/2);if(u<0.5)return 1;return Math.cos(Math.min(1,(u-0.5)/0.5)*Math.PI/2)}
+function pushLunge(u){if(u<0.32)return Math.sin(u/0.32*Math.PI/2);return Math.cos(Math.min(1,(u-0.32)/0.68)*Math.PI/2)}
+function queueFx(type, from, to, slide){
+  if(!to||from===to)return;
+  const now=performance.now();
+  combatFx=combatFx.filter(fx=>now-fx.t0<fx.dur);
+  const hit=combatFx.find(fx=>fx.type===type&&fx.to===to&&now-fx.t0<680);
+  if(hit){if(from&&!hit.from)hit.from=from;if(slide&&!hit.slide)hit.slide=slide;return}
+  combatFx.push({type, from:from||null, to, slide:slide||null, t0:now, dur:reduceMotion?240:(type==="attack"?640:560)});
+  ensureLoop();
+}
+function guessAttacker(victim){
+  const M=S&&S.me; if(!M)return null;
+  if(M.role==="impostor"&&M.name!==victim)return M.name;
+  const here=(M.here||[]).map(whoName).filter(n=>n&&n!==victim&&n!==M.name);
+  return here[0]||null;
+}
+function addedLines(prev, next){
+  if(!prev.length||!next.length||next.length<prev.length)return [];
+  const max=Math.min(prev.length, next.length);
+  for(let len=max; len>0; len--){
+    const slice=prev.slice(prev.length-len);
+    for(let i=next.length-len; i>=0; i--){
+      let ok=true;
+      for(let j=0;j<len;j++) if(next[i+j]!==slice[j]){ok=false;break}
+      if(ok)return next.slice(i+len);
+    }
+  }
+  return [];
+}
+function readFxLine(line){
+  const text=String(line||"").replace(/^🚨\s*/,"");
+  let m=/^(.+?) empuj[oó] a (.+?)(?:\.|$)/.exec(text);
+  if(m)return {type:"push", from:m[1].trim(), to:m[2].trim()};
+  m=/^(.+?) (?:atac[oó]|golpe[oó]) a (.+?)(?:\.|$)/.exec(text);
+  if(m)return {type:"attack", from:m[1].trim(), to:m[2].trim()};
+  return null;
+}
+function eventFx(e){
+  if(!e||typeof e!=="object")return null;
+  const type=e.type||e.action||e.kind;
+  const from=whoName(e.from||e.attacker||e.by||e.source);
+  const to=whoName(e.to||e.target||e.victim);
+  if(!to)return null;
+  if(type==="push"||type==="empujar")return {type:"push", from, to};
+  if(type==="attack"||type==="kill"||type==="hit"||type==="atacar")return {type:"attack", from, to};
+  return null;
+}
+function freshEvents(prev, arr){
+  if(!Array.isArray(arr)||!arr.length||!Array.isArray(prev))return [];
+  if(arr.length>prev.length&&JSON.stringify(arr.slice(0,prev.length))===JSON.stringify(prev))return arr.slice(prev.length);
+  if(JSON.stringify(arr[arr.length-1])!==JSON.stringify(prev[prev.length-1]))return [arr[arr.length-1]];
+  return [];
+}
+function pushSlide(lp){
+  if(!lp||!lp.from||!lp.to)return null;
+  const x=Number(lp.to.x)-Number(lp.from.x), y=Number(lp.to.y)-Number(lp.from.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+  return {x, y};
+}
+function observeCombat(){
+  if(!S||S.phase==="lobby"){seenBodies=[];seenLives={};seenLog=[];seenEvt=[];seenPushId=null;return}
+  const bodies=(S.me&&S.me.bodies||[]).map(whoName).filter(Boolean);
+  const lives={};
+  (S.players||[]).forEach(p=>{const v=clampLives(p.lives);if(v!=null)lives[p.name]=v});
+  if(S.me){const v=clampLives(S.me.lives);if(v!=null)lives[S.me.name]=v}
+  const log=(S.log||[]).slice();
+  const ev=Array.isArray(S.events)?S.events:(Array.isArray(S.fx)?S.fx:[]);
+  const lp=S.last_push;
+  const pushId=lp&&lp.id!=null?lp.id:null;
+  if(seenLog){
+    const prevB=new Set(seenBodies);
+    bodies.forEach(b=>{if(!prevB.has(b))queueFx("attack", guessAttacker(b), b)});
+    Object.keys(lives).forEach(n=>{if(seenLives[n]!=null&&lives[n]<seenLives[n])queueFx("attack", guessAttacker(n), n)});
+    addedLines(seenLog, log).forEach(line=>{const hit=readFxLine(line);if(hit)queueFx(hit.type, hit.from, hit.to)});
+    freshEvents(seenEvt, ev).forEach(e=>{const hit=eventFx(e);if(hit)queueFx(hit.type, hit.from, hit.to)});
+    if(lp&&pushId!==seenPushId)queueFx("push", lp.by, lp.target, pushSlide(lp));
+  }
+  seenBodies=bodies; seenLives=lives; seenLog=log; seenEvt=ev.slice(); seenPushId=pushId;
+}
+function motionFor(name){
+  if(reduceMotion)return {dx:0, dy:0};
+  const now=performance.now();
+  let dx=0, dy=0;
+  for(const fx of combatFx){
+    const u=(now-fx.t0)/fx.dur;
+    if(u<0||u>=1)continue;
+    const slide=fx.slide;
+    const slideLen=slide?Math.hypot(slide.x, slide.y):0;
+    const a=fx.fromPos, b=fx.toPos;
+    let ux=0, uy=0, have=false;
+    if(slideLen>0.5){ux=slide.x/slideLen; uy=slide.y/slideLen; have=true}
+    else if(a&&b){const dist=Math.hypot(b.x-a.x, b.y-a.y)||1; ux=(b.x-a.x)/dist; uy=(b.y-a.y)/dist; have=true}
+    if(!have)continue;
+    if(name===fx.from){
+      const amp=fx.type==="attack"?40:14;
+      const k=fx.type==="attack"?attackLunge(u):pushLunge(u);
+      dx+=ux*amp*k; dy+=uy*amp*k;
+    }else if(name===fx.to){
+      if(fx.type==="push"&&slideLen>0.5){
+        const k=Math.sin(Math.min(1,u*1.05)*Math.PI);
+        dx+=slide.x*k; dy+=slide.y*k;
+      }else{
+        const amp=fx.type==="attack"?8:28;
+        const k=fx.type==="attack"?(u<0.36?0:Math.sin(Math.min(1,(u-0.36)/0.4)*Math.PI)):Math.sin(Math.min(1,u*1.05)*Math.PI);
+        dx+=ux*amp*k; dy+=uy*amp*k;
+      }
+    }
+  }
+  return {dx, dy};
+}
+function impactMark(k){
+  if(k<=0.04)return "";
+  const op=Math.max(0, Math.sin(Math.min(1,k)*Math.PI)).toFixed(2);
+  const sc=(1.2+k*1.45).toFixed(2);
+  return `<g opacity="${op}" transform="translate(0,-6) scale(${sc})" pointer-events="none"><circle r="8" fill="#fffaf3" stroke="#e2a24a" stroke-width="1.6"/><circle r="3.2" fill="#6b3e2a"/><path d="M0-14c.8 3-.6 4 .2 6.5M9-7c-2 2-1.4 3.6.6 5.2M-9-6c2 1.8 1.2 3.4-.4 5" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="13" cy="1" r="1.8" fill="#c47a2a"/><circle cx="-12" cy="2" r="1.6" fill="#e8c07a"/><circle cx="5" cy="11" r="1.7" fill="#a33b32"/><circle cx="-4" cy="12" r="2" fill="#6b3e2a"/><path d="M-2-16l1.1 3.2 3.2.8-2.6 1.8.9 3.1-2.6-1.6-2.6 1.6.9-3.1-2.6-1.8 3.2-.8z" fill="#fff6c2" stroke="#3a241c" stroke-width=".4"/></g>`;
+}
+function pushStreak(k, ang){
+  if(k<=0.04)return "";
+  const op=Math.max(0, Math.sin(Math.min(1,k)*Math.PI)).toFixed(2);
+  return `<g opacity="${op}" transform="rotate(${ang.toFixed(1)})" pointer-events="none"><path d="M-30-9h18M-28 0h15M-26 9h12" stroke="#e2a24a" stroke-width="2.8" stroke-linecap="round"/></g>`;
+}
+function fxDecor(name){
+  const now=performance.now();
+  let out="";
+  for(const fx of combatFx){
+    if(fx.to!==name)continue;
+    const u=(now-fx.t0)/fx.dur;
+    if(u<0||u>=1)continue;
+    if(fx.type==="attack"){
+      const k=u<0.3||u>0.95?0:Math.sin((u-0.3)/0.65*Math.PI);
+      out+=impactMark(k);
+    }else{
+      const a=fx.fromPos, b=fx.toPos;
+      const ang=fx.slide?Math.atan2(fx.slide.y, fx.slide.x)*180/Math.PI:(a&&b?Math.atan2(b.y-a.y, b.x-a.x)*180/Math.PI:0);
+      out+=pushStreak(Math.sin(Math.min(1,u)*Math.PI), ang);
+    }
+  }
+  return out;
+}
+function livesMark(n, y){
+  const max=maxLives();
+  const v=clampLives(n); const c=v==null?max:v;
+  let s=`<g pointer-events="none"><title>${c} de ${max} vidas</title>`;
+  for(let i=0;i<max;i++){
+    const on=i<c;
+    s+=`<g transform="translate(${((i-(max-1)/2)*13).toFixed(1)},${y}) scale(2.2)"><path d="M0 2.4C0 2.4-3.1-.2-3.1-1.8A1.55 1.55 0 0 1 0-1.15 1.55 1.55 0 0 1 3.1-1.8C3.1-.2 0 2.4 0 2.4z" fill="${on?"#e0435a":"#fffaf3"}" stroke="${on?"#7a2430":"#c45c66"}" stroke-width=".9" stroke-linejoin="round"/></g>`;
+  }
+  return s+"</g>";
+}
+function bindFxPositions(M){
+  if(!M||!combatFx.length)return;
+  const pos={};
+  for(const name in ROOMS){
+    for(const spot of layout(name, peopleIn(name, M))){
+      if(walk&&spot.it.self&&!spot.it.body)continue;
+      pos[spot.it.name]={x:spot.x, y:spot.y};
+    }
+  }
+  if(walk){
+    const t=Math.min(1,(performance.now()-walk.t0)/walk.dur);
+    const at=pointAt(walk.pts, ease(t));
+    pos[M.name]={x:at.x, y:at.y};
+  }
+  for(const fx of combatFx){
+    if(fx.from&&pos[fx.from])fx.fromPos=pos[fx.from];
+    if(pos[fx.to])fx.toPos=pos[fx.to];
+  }
+}
 function nameTag(x,y,text,fs,anchor,sub){const fs2=Math.max(8,fs-2);const subColor=sub==="tú"?"#8a5a10":"#8a4032";const w=Math.max(String(text).length*fs*0.58,(sub?String(sub).length*fs2*0.58:0))+12;const h=sub?fs+fs2+7:fs+6;const left=anchor==="middle"?x-w/2:x;const tx=anchor==="middle"?x:x+6;const ta=anchor==="middle"?"middle":"start";return`<g pointer-events="none"><rect x="${left.toFixed(1)}" y="${(y-fs).toFixed(1)}" width="${w.toFixed(1)}" height="${h}" rx="4" fill="#fffaf3" fill-opacity=".94" stroke="#e4d2b4" stroke-width=".6"/><text x="${tx.toFixed(1)}" y="${y}" text-anchor="${ta}" font-size="${fs}" font-weight="700" fill="#3f2a1c" font-family="Manrope,system-ui,sans-serif">${esc(text)}</text>${sub?`<text x="${tx.toFixed(1)}" y="${y+fs2+1}" text-anchor="${ta}" font-size="${fs2}" font-weight="700" fill="${subColor}" font-family="Manrope,system-ui,sans-serif">${esc(sub)}</text>`:""}</g>`}
-function figure(it,cl,x,y,fs,sc,mode,pop){const kind=it.body?"dead":(it.ghost?"ghost":"live");const glyph=cupGlyph(it.name,kind);const tagX=mode==="right"?24:0;const tagY=mode==="right"?8:36;const anchor=mode==="right"?"start":"middle";const sub=it.body?"cuerpo":(it.self?"tú":"");const ring=!it.body&&it.self?`<ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/>`:"";return `<g class="${pop||""}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})" pointer-events="none">${ring}<g transform="scale(${sc})">${glyph}</g>${nameTag(tagX,tagY,it.name,fs,anchor,sub)}</g>`}
-function peopleIn(room,M){if(!M||M.room!==room)return[];const list=[{name:M.name,self:true,ghost:!M.alive}];for(const n of M.here||[])list.push({name:n});for(const n of M.bodies||[])list.push({name:n,body:true});return list}
+function figure(it,cl,x,y,fs,sc,mode,pop){const kind=it.body?"dead":(it.ghost?"ghost":"live");const glyph=cupGlyph(it.name,kind);const tagX=mode==="right"?24:0;const tagY=mode==="right"?8:36;const anchor=mode==="right"?"start":"middle";const sub=it.body?"cuerpo":(it.self?"tú":"");const ring=!it.body&&it.self?`<ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/>`:"";const mot=motionFor(it.name);const hy=-46;return `<g class="${pop||""}" transform="translate(${(x+mot.dx).toFixed(1)},${(y+mot.dy).toFixed(1)})" pointer-events="none">${ring}<g transform="scale(${sc})">${glyph}</g>${livesMark(livesOf(it.name,!!it.body||!!it.ghost),hy)}${fxDecor(it.name)}${nameTag(tagX,tagY,it.name,fs,anchor,sub)}</g>`}
+function peopleIn(room,M){if(!M||M.room!==room)return[];const list=[{name:M.name,self:true,ghost:!M.alive}];for(const n of M.here||[]){const name=whoName(n);if(name)list.push({name})}for(const n of M.bodies||[]){const name=whoName(n);if(name)list.push({name,body:true})}return list}
 function layout(room,items){const r=ROOMS[room];if(!r||!items.length)return[];const n=items.length;const wide=!!r.wide;const maxRow=r.maxRow||4;if(n<=maxRow||wide){const gap=n<=1?0:Math.min(r.gap||34,(r.span||120)/Math.max(1,n-1));const total=gap*(n-1);const fs=n>=4?10:(r.fs||12);return items.map((it,i)=>({it,x:r.stand[0]-total/2+i*gap,y:r.stand[1],fs,sc:it.body?(r.sc||1)*.95:(r.sc||1),mode:"mid"}))}const row=38;const top=r.stand[1]-((n-1)*row)/2;return items.map((it,i)=>({it,x:r.stand[0]-24,y:top+i*row,fs:11,sc:Math.min(r.sc||1,.9),mode:"right"}))}
 function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1])}
 function clean(pts){const out=[];for(const p of pts){const q=[p[0],p[1]];const last=out[out.length-1];if(!last||dist(last,q)>0.8)out.push(q)}return out.length?out:[[0,0]]}
@@ -695,7 +898,26 @@ function ventRoute(a,b,start,end){const v=VENT_DRAW.find(v=>(v.a===a&&v.b===b)||
 function travelDur(pts){let L=0;for(let i=1;i<pts.length;i++)L+=dist(pts[i-1],pts[i]);return Math.max(520,Math.min(1500,L*1.25))}
 function slotOf(M){const laid=layout(M.room,peopleIn(M.room,M));const meSlot=laid.find(p=>p.it.self&&!p.it.body);return meSlot?[meSlot.x,meSlot.y]:(ROOMS[M.room]?ROOMS[M.room].stand.slice():[0,0])}
 function syncWalk(M){if(!M){seenRoom=null;selfAnchor=null;walk=null;return}const room=M.room;if(seenRoom&&seenRoom!==room){const start=(walk&&walk.live)||selfAnchor||(ROOMS[seenRoom]?ROOMS[seenRoom].stand.slice():[0,0]);const end=slotOf(M);if(!reduceMotion){const via=travelHint==="vent"&&isVent(seenRoom,room)?"vent":"walk";const pts=via==="vent"?ventRoute(seenRoom,room,start,end):route(seenRoom,room,start,end);walk={name:M.name,from:seenRoom,to:room,pts,t0:performance.now(),dur:travelDur(pts),live:start.slice()};ensureLoop()}else walk=null}seenRoom=room}
-function ensureLoop(){if(walkRAF||!walk)return;const step=now=>{if(!walk){walkRAF=0;return}const g=document.getElementById("walker");const t=Math.min(1,(now-walk.t0)/walk.dur);const p=pointAt(walk.pts,ease(t));walk.live=[p.x,p.y];if(g){const bob=Math.sin(t*Math.PI*7)*1.7;g.setAttribute("transform",`translate(${p.x.toFixed(1)},${(p.y+bob).toFixed(1)})`);const face=g.querySelector(".face");if(face){const dir=faceSign(walk.pts,t);face.setAttribute("transform",`scale(${dir},1)`)}}if(t>=1){walk=null;walkRAF=0;paint();return}walkRAF=requestAnimationFrame(step)};walkRAF=requestAnimationFrame(step)}
+function ensureLoop(){
+  if(walkRAF)return;
+  if(!walk&&!combatFx.length)return;
+  const step=now=>{
+    const before=combatFx.length;
+    combatFx=combatFx.filter(fx=>now-fx.t0<fx.dur);
+    if(combatFx.length){paint();walkRAF=requestAnimationFrame(step);return}
+    if(before){paint();if(!walk){walkRAF=0;return}walkRAF=requestAnimationFrame(step);return}
+    if(!walk){walkRAF=0;return}
+    const g=document.getElementById("walker");
+    const t=Math.min(1,(now-walk.t0)/walk.dur);
+    const p=pointAt(walk.pts,ease(t));
+    walk.live=[p.x,p.y];
+    if(g){const bob=Math.sin(t*Math.PI*7)*1.7;g.setAttribute("transform",`translate(${p.x.toFixed(1)},${(p.y+bob).toFixed(1)})`);const face=g.querySelector(".face");if(face){const dir=faceSign(walk.pts,t);face.setAttribute("transform",`scale(${dir},1)`)}
+    }
+    if(t>=1){walk=null;walkRAF=0;paint();return}
+    walkRAF=requestAnimationFrame(step);
+  };
+  walkRAF=requestAnimationFrame(step);
+}
 function extendEnds(pts,amt){if(pts.length<2)return pts.map(p=>p.slice());const out=pts.map(p=>p.slice());function nudge(i,j){const dx=pts[j][0]-pts[i][0],dy=pts[j][1]-pts[i][1];const L=Math.hypot(dx,dy)||1;out[i][0]=pts[i][0]-dx/L*amt;out[i][1]=pts[i][1]-dy/L*amt}nudge(0,1);nudge(pts.length-1,pts.length-2);return out}
 function poly(pts){return pts.map(p=>p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ")}
 function roomAttrs(r){if(r.circle){const[cx,cy,rad]=r.circle;return{tag:"ellipse",attrs:`cx="${cx}" cy="${cy}" rx="${rad}" ry="${rad}"`}}return{tag:"path",attrs:`d="${r.d}"`}}
@@ -776,8 +998,9 @@ for(const l of HALL_LABELS){const tr=l.rot?` transform="rotate(${l.rot} ${l.x} $
 p.push(`</g>`);
 p.push(`<g pointer-events="none" transform="translate(724,392)"><circle r="26" fill="#5c3d2c" stroke="#c4a574" stroke-width="2"/><circle r="20" fill="none" stroke="#e6b15a" stroke-width="1.2"/><g transform="translate(0,-4)"><circle r="5.5" fill="#fffaf3" stroke="#e6d2b4" stroke-width="1"/><path d="M4.6 0h2.6a2 2 0 0 1 0 4H4.6" fill="none" stroke="#e6d2b4" stroke-width="1"/><ellipse cy="-1" rx="2.2" ry=".9" fill="#6b3e2a"/></g><text y="16" text-anchor="middle" font-size="8" font-weight="800" fill="#f6ebdd" letter-spacing=".8" font-family="Manrope,system-ui,sans-serif">CAFÉ</text></g>`);
 for(const v of VENT_DRAW){p.push(`<g pointer-events="none"><polyline points="${poly(v.pts)}" fill="none" stroke="#241810" stroke-width="8" stroke-dasharray="1 7" stroke-linecap="round"/><polyline points="${poly(v.pts)}" fill="none" stroke="#eadcc8" stroke-width="3" stroke-dasharray="1 8" stroke-linecap="round"/><text x="${v.lx}" y="${v.ly}" font-size="11" font-weight="800" fill="#f6ebdd" stroke="#2a211c" stroke-width="3" paint-order="stroke" font-family="Manrope,system-ui,sans-serif">ventila</text></g>`)}
+bindFxPositions(M);
 for(const name in ROOMS){const r=ROOMS[name];const items=peopleIn(name,M);const laid=layout(name,items);let folks="";for(const spot of laid){if(walk&&spot.it.self&&!spot.it.body)continue;const key=spot.it.name+(spot.it.body?"#cuerpo":"");const pop=knownPeople&&!knownPeople.has(key)&&!reduceMotion?"pop":"";names.add(key);folks+=figure(spot.it,cl,spot.x,spot.y,spot.fs,spot.sc,spot.mode,pop)}const icon=name==="Barra"?iconFor(name):`<g transform="translate(${r.icon[0]},${r.icon[1]})">${iconFor(name)}</g>`;p.push(`<g pointer-events="none">${icon}${roomLabel(r)}${tasks.has(name)?taskBadge(r.badge[0],r.badge[1]):""}</g>`);p.push(folks)}
-if(walk&&M){const t=Math.min(1,(performance.now()-walk.t0)/walk.dur);const pos=pointAt(walk.pts,ease(t));const dir=faceSign(walk.pts,t);p.push(`<g id="walker" transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)})" pointer-events="none"><ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/><g class="face" transform="scale(${dir},1)">${cupGlyph(M.name,M.alive?"live":"ghost")}</g>${nameTag(0,36,M.name,13,"middle","tú")}</g>`)}
+if(walk&&M){const t=Math.min(1,(performance.now()-walk.t0)/walk.dur);const at=pointAt(walk.pts,ease(t));const dir=faceSign(walk.pts,t);const mot=motionFor(M.name);p.push(`<g id="walker" transform="translate(${(at.x+mot.dx).toFixed(1)},${(at.y+mot.dy).toFixed(1)})" pointer-events="none"><ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/><g class="face" transform="scale(${dir},1)">${cupGlyph(M.name,M.alive?"live":"ghost")}</g>${livesMark(livesOf(M.name,!M.alive),-46)}${fxDecor(M.name)}${nameTag(0,36,M.name,13,"middle","tú")}</g>`)}
 for(const v of VENT_DRAW){p.push(grate(v.ga[0],v.ga[1],false));p.push(grate(v.gb[0],v.gb[1],false))}
 for(const name in ROOMS){const r=ROOMS[name];const can=exits.has(name);const title=`<title>${esc(name)}${can?". Puedes entrar.":""}</title>`;p.push(roomEl(r,`class="hit${can?" can":""}" ${can?`data-move="${esc(name)}"`:""} fill="transparent"`,title))}
 p.push(propsLayer(M));
@@ -791,7 +1014,7 @@ root.querySelectorAll("[data-prop]").forEach(el=>{const go=ev=>{ev.preventDefaul
 knownPeople=names;
 if(M&&!walk){const slot=slotOf(M);selfAnchor=slot}
 }
-function drawMap(cl){lastCl=cl||lastCl;syncWalk(S.me);paint();if(walk)ensureLoop()}
+function drawMap(cl){lastCl=cl||lastCl;syncWalk(S.me);paint();if(walk||combatFx.length)ensureLoop()}
 let mtgRoot=null,mtgPhase=null,mtgResult=null,mtgDraft="",mtgChatError="",mtgSig="";
 function mtgEsc(s){return String(s==null?"":s).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]))}
 function mtgInk(hex){const n=parseInt(String(hex).slice(1),16);if(!Number.isFinite(n))return"#fffaf3";const r=(n>>16)&255,g=(n>>8)&255,b=n&255;return(0.299*r+0.587*g+0.114*b)/255>0.62?"#3a2418":"#fffaf3"}
@@ -803,11 +1026,11 @@ function mtgParseVotes(raw){const votes=[];const re=/'((?:\\'|[^'])*)'\s*:\s*(\d
 function mtgReadResult(log,winner){const rows=log||[];for(let i=rows.length-1;i>=0;i--){const line=rows[i];let m=/^(.*) fue expulsado al espacio\. Votos: (\{.*\})$/.exec(line);if(m)return{ejected:m[1],votes:mtgParseVotes(m[2]),raw:line,winner:winner||null};m=/^Nadie fue expulsado\. Votos: (\{.*\})$/.exec(line);if(m)return{ejected:null,votes:mtgParseVotes(m[1]),raw:line,winner:winner||null}}return{ejected:null,votes:[],raw:(rows[rows.length-1]||""),winner:winner||null,unknown:true}}
 function mtgCanVote(){return !!(S&&S.me&&S.me.alive&&S.phase==="meeting")}
 function mtgLineHtml(line){const say=/^(💬|👻)\s([^:]+):\s([\s\S]*)$/.exec(line);if(say){const ghost=say[1]==="👻";return`<div class="mtg-msg${ghost?" mtg-msg-ghost":""}"><b style="color:${mtgColor(say[2])}">${mtgEsc(say[2])}</b><span>${mtgEsc(say[3])}</span></div>`}const voted=/^(.+) votó\.$/.exec(line);if(voted)return`<div class="mtg-msg mtg-msg-sys"><i style="background:${mtgColor(voted[1])}"></i>${mtgEsc(voted[1])} votó.</div>`;return`<div class="mtg-msg mtg-msg-sys">${mtgEsc(line.replace(/^🚨\s*/,""))}</div>`}
-function mtgCardsHtml(){const me=S.me&&S.me.name;const can=mtgCanVote();return (S.players||[]).map(p=>{const color=mtgColor(p.name);const ghost=!p.alive;const cls=["mtg-card",ghost?"mtg-ghost":"",p.name===me?"mtg-me":"",p.voted?"mtg-did":""].filter(Boolean).join(" ");const chip=ghost?"Fantasma":(p.name===me?"Tú":"En la mesa");const mark=p.voted?`<span class="mtg-voted">Ya votó</span>`:"";const action=ghost?`<p class="mtg-ghost-hint">No vota</p>`:(can?`<button type="button" class="mtg-btn" data-mtg-vote="${mtgEsc(p.name)}" aria-label="Votar por ${mtgEsc(p.name)}">Votar</button>`:`<p class="mtg-ghost-hint">Sin voto</p>`);return`<article class="${cls}" style="--mtg-c:${color}"><div class="mtg-card-top"><div class="mtg-avatar" style="background:${color};color:${mtgInk(color)}" aria-hidden="true">${mtgInitial(p.name)}</div><div class="mtg-id"><strong class="mtg-name" title="${mtgEsc(p.name)}">${mtgEsc(p.name)}</strong><span class="mtg-chip">${chip}</span></div>${mark}</div>${action}</article>`}).join("")}
+function mtgCardsHtml(){const me=S.me&&S.me.name;const can=mtgCanVote();return (S.players||[]).map(p=>{const color=mtgColor(p.name);const ghost=!p.alive;const cls=["mtg-card",ghost?"mtg-ghost":"",p.name===me?"mtg-me":"",p.voted?"mtg-did":""].filter(Boolean).join(" ");const chip=ghost?"Fantasma":(p.name===me?"Tú":"En la mesa");const mark=p.voted?`<span class="mtg-voted">Ya votó</span>`:"";const action=ghost?`<p class="mtg-ghost-hint">No vota</p>`:(can?`<button type="button" class="mtg-btn" data-mtg-vote="${mtgEsc(p.name)}" aria-label="Votar por ${mtgEsc(p.name)}">Votar</button>`:`<p class="mtg-ghost-hint">Sin voto</p>`);return`<article class="${cls}" style="--mtg-c:${color}"><div class="mtg-card-top"><div class="mtg-avatar" style="background:${color};color:${mtgInk(color)}" aria-hidden="true">${mtgInitial(p.name)}</div><div class="mtg-id"><strong class="mtg-name" title="${mtgEsc(p.name)}">${mtgEsc(p.name)}</strong><span class="mtg-chip">${chip}</span>${livesHtml(livesOf(p.name,!p.alive))}</div>${mark}</div>${action}</article>`}).join("")}
 function mtgMeetingHtml(){const reason=mtgReason(S.log);const title=reason.kind==="body"?"Cuerpo reportado":"Reunión de emergencia";const ico=reason.kind==="body"?`<svg class="mtg-ico" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="5.5" fill="currentColor"/><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>`:`<svg class="mtg-ico" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 3.2a1.8 1.8 0 0 1 1.8 1.8v1.1a7.4 7.4 0 0 1 5.7 7.2v3.6l1.9 2.8a1.2 1.2 0 0 1-1 1.9H7.6a1.2 1.2 0 0 1-1-1.9l1.9-2.8v-3.6a7.4 7.4 0 0 1 5.7-7.2V5A1.8 1.8 0 0 1 16 3.2z"/><path fill="currentColor" d="M12.6 23.2a3.4 3.4 0 0 0 6.8 0z"/></svg>`;const alive=(S.players||[]).filter(p=>p.alive);const n=alive.filter(p=>p.voted).length;const t=alive.length;const pct=t?Math.round(n/t*100):0;const meP=S.me&&(S.players||[]).find(p=>p.name===S.me.name);const note=meP&&meP.alive&&meP.voted?`<p class="mtg-you-voted">Tu voto ya está en la urna. Puedes cambiarlo.</p>`:"";const tail=mtgCanVote()?`<button type="button" class="mtg-btn mtg-btn-skip" data-mtg-vote="skip">Saltar voto</button>`:`<p class="mtg-skip-note">${S.me&&!S.me.alive?"Los fantasmas no votan. La mesa sigue sin ti.":"Estás mirando la mesa."}</p>`;const lines=mtgSlice(S.log).map(mtgLineHtml).join("")||`<p class="mtg-empty">La mesa está en silencio.</p>`;const err=mtgChatError?`<p class="mtg-chat-error" role="alert">${mtgEsc(mtgChatError)}</p>`:"";const form=S.me?`<form id="mtg-chat-form" class="mtg-chat-form" autocomplete="off"><input id="mtg-chat-input" class="mtg-input" maxlength="200" placeholder="Di algo en la mesa…" aria-label="Mensaje de la reunión"><button type="submit" class="mtg-btn mtg-btn-talk">Hablar</button></form>${err}`:`<p class="mtg-skip-note">Entra a la partida para hablar.</p>`;return`<header class="mtg-banner"><div class="mtg-alert mtg-alert-${reason.kind}" role="status">${ico}<div><p class="mtg-kicker">Atención</p><h2 id="mtg-title" class="mtg-title">${title}</h2></div></div><p class="mtg-detail">${mtgEsc(reason.detail)}</p></header><div class="mtg-stage"><section class="mtg-table" aria-label="Votación"><div class="mtg-table-head"><h3>¿Quién se va?</h3><p class="mtg-count">Han votado ${n} de ${t}</p></div><div class="mtg-meter" aria-hidden="true"><span style="width:${pct}%"></span></div>${note}<div class="mtg-cards">${mtgCardsHtml()}</div>${tail}</section><aside class="mtg-chat" aria-label="Chat de la reunión"><h3>Charla de la reunión</h3><div id="mtg-chat-log" class="mtg-chat-log"><div class="mtg-chat-spacer"></div>${lines}</div>${form}</aside></div>`}
 function mtgTallyHtml(res){const votes=(res.votes||[]).slice().sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name,"es"));if(!votes.length)return res.raw?`<p class="mtg-raw">${mtgEsc(res.raw)}</p>`:"";const max=votes.reduce((m,v)=>Math.max(m,v.count),1);return votes.map(v=>{const skip=v.name==="skip";const label=skip?"Saltar voto":v.name;const color=skip?"#8a6a52":mtgColor(v.name);const pct=Math.round(v.count/max*100);const hot=!skip&&res.ejected===v.name;return`<div class="mtg-row${hot?" mtg-row-out":""}"><span class="mtg-dot" style="background:${color}"></span><span class="mtg-row-name">${mtgEsc(label)}</span><span class="mtg-row-track"><span class="mtg-row-fill" style="width:${pct}%;background:${color}"></span></span><span class="mtg-row-n">${v.count}</span></div>`}).join("")}
 function mtgResultHtml(res){const votes=res.votes||[];const top=votes.reduce((m,v)=>Math.max(m,v.count),0);const leaders=votes.filter(v=>v.count===top);let title,sub,hero;if(res.unknown){title="La votación terminó";sub=res.raw?mtgEsc(res.raw):"La mesa ya cerró.";hero=""}else if(res.ejected){const color=mtgColor(res.ejected);title=`<span style="color:${color}">${mtgEsc(res.ejected)}</span> fue expulsado`;sub="La mesa lo decidió.";hero=`<div class="mtg-avatar mtg-avatar-lg" style="background:${color};color:${mtgInk(color)}" aria-hidden="true">${mtgInitial(res.ejected)}</div>`}else if(leaders.length===1&&leaders[0].name==="skip"){title="Nadie fue expulsado";sub="Ganó saltar el voto.";hero=`<div class="mtg-safe-mark" aria-hidden="true"></div>`}else{title="Nadie fue expulsado";sub="Empate: no hay expulsión.";hero=`<div class="mtg-safe-mark" aria-hidden="true"></div>`}const win=res.winner?`<p class="mtg-winner ${String(res.winner).indexOf("tripulantes")!==-1?"mtg-winner-crew":"mtg-winner-imp"}">${mtgEsc(res.winner)}</p>`:"";return`<section class="mtg-result"><p class="mtg-kicker">Resultado de la votación</p>${hero}<h2 id="mtg-title" class="mtg-result-title">${title}</h2><p class="mtg-result-sub">${sub}</p><div class="mtg-tally">${mtgTallyHtml(res)}</div>${win}<button type="button" class="mtg-btn mtg-btn-back" data-mtg-dismiss>Volver a la cafetería</button></section>`}
-function mtgSignature(){if(mtgResult)return"result\n"+(mtgResult.raw||"")+"\n"+(mtgResult.winner||"")+"\n"+(mtgResult.ejected||"");const reason=mtgReason(S.log);const people=(S.players||[]).map(p=>p.name+":"+(p.alive?"1":"0")+":"+(p.voted?"1":"0")).join("|");const who=S.me?S.me.name+":"+(S.me.alive?"1":"0"):"";return"meet\n"+reason.kind+"\n"+reason.detail+"\n"+people+"\n"+who+"\n"+mtgSlice(S.log).join("\n")+"\n"+mtgChatError}
+function mtgSignature(){if(mtgResult)return"result\n"+(mtgResult.raw||"")+"\n"+(mtgResult.winner||"")+"\n"+(mtgResult.ejected||"");const reason=mtgReason(S.log);const people=(S.players||[]).map(p=>p.name+":"+(p.alive?"1":"0")+":"+(p.voted?"1":"0")+":"+livesOf(p.name,!p.alive)).join("|");const who=S.me?S.me.name+":"+(S.me.alive?"1":"0")+":"+livesOf(S.me.name,!S.me.alive):"";return"meet\n"+reason.kind+"\n"+reason.detail+"\n"+people+"\n"+who+"\n"+mtgSlice(S.log).join("\n")+"\n"+mtgChatError}
 function mtgEnsure(){if(mtgRoot)return mtgRoot;mtgRoot=document.createElement("div");mtgRoot.id="mtg-root";mtgRoot.className="mtg-overlay";mtgRoot.hidden=true;mtgRoot.setAttribute("role","dialog");mtgRoot.setAttribute("aria-modal","true");mtgRoot.setAttribute("aria-labelledby","mtg-title");mtgRoot.addEventListener("click",mtgOnClick);mtgRoot.addEventListener("submit",mtgOnSubmit);document.body.appendChild(mtgRoot);document.addEventListener("keydown",ev=>{if(ev.key==="Escape"&&mtgResult)mtgDismiss()});return mtgRoot}
 function mtgSetInert(on){const wrap=document.querySelector(".wrap");const h1=document.querySelector("h1");if(wrap)wrap.inert=on;if(h1)h1.inert=on}
 function mtgPaint(){const root=mtgEnsure();const show=!!(S&&(S.phase==="meeting"||mtgResult));mtgSetInert(show);if(!show){root.hidden=true;root.setAttribute("aria-hidden","true");if(mtgSig){root.innerHTML="";mtgSig=""}return}const sig=mtgSignature();if(sig===mtgSig&&!root.hidden)return;const mode=sig.startsWith("result")?"result":"meet";const prev=mtgSig.startsWith("result")?"result":(mtgSig.startsWith("meet")?"meet":"");const enter=mode!==prev;const prevInput=document.getElementById("mtg-chat-input");if(prevInput)mtgDraft=prevInput.value;const logEl=document.getElementById("mtg-chat-log");const stick=!logEl||logEl.scrollHeight-logEl.scrollTop-logEl.clientHeight<48;const prevScroll=logEl?logEl.scrollTop:0;const focused=!!(prevInput&&document.activeElement===prevInput);const sel=focused?[prevInput.selectionStart,prevInput.selectionEnd]:null;let cls="mtg-overlay mtg-is-"+mode+(enter?" mtg-enter":"");if(mode==="meet")cls+=" mtg-kind-"+mtgReason(S.log).kind;root.hidden=false;root.removeAttribute("aria-hidden");root.className=cls;mtgSig=sig;root.innerHTML=mode==="result"?mtgResultHtml(mtgResult):mtgMeetingHtml();const input=document.getElementById("mtg-chat-input");if(input){input.value=mtgDraft;if(focused){input.focus();if(sel)input.setSelectionRange(sel[0],sel[1])}}const box=document.getElementById("mtg-chat-log");if(box)box.scrollTop=stick?box.scrollHeight:prevScroll}
