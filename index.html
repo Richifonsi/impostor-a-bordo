@@ -894,8 +894,9 @@ function heartGeom(sc){
   const oldBottom=(ty+4*s)*k-4*k*0.28+0.45*oldScale;
   const oldGap=rimTop-oldBottom;
   const scale=oldScale*0.8;
-  // 0.013 leaves 40% of the previous painted rim gap (a 60% reduction).
-  const bottom=rimTop-oldGap*0.013;
+  // +10 screen px at 1280×800, where the map is 831 px across a 1020-wide viewBox.
+  const extra=10*(1020/831);
+  const bottom=rimTop-oldGap*0.013-extra;
   const y=bottom-(2.4+0.45)*scale;
   return {y, scale, step:6.2*scale*0.95};
 }
