@@ -894,8 +894,8 @@ function heartGeom(sc){
   const oldBottom=(ty+4*s)*k-4*k*0.28+0.45*oldScale;
   const oldGap=rimTop-oldBottom;
   const scale=oldScale*0.8;
-  // 0.564, not 0.6: stroke makes the painted rim gap 60% of the last one.
-  const bottom=rimTop-oldGap*0.564;
+  // 0.223 leaves half the painted gap under the hearts (rim, not steam).
+  const bottom=rimTop-oldGap*0.223;
   const y=bottom-(2.4+0.45)*scale;
   return {y, scale, step:6.2*scale*0.95};
 }
