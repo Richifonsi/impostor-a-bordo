@@ -1,4 +1,4 @@
-import json, math, os, random, secrets, threading
+import json, math, os, random, secrets, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -13,6 +13,8 @@ HITBOX = 14
 LIVES = 3
 ATTACK_COOLDOWN = 3
 PUSH_COOLDOWN = 2
+SAY_MAX = 200
+SAY_COOLDOWN = 1
 
 L = threading.Lock()
 ROOT = Path(__file__).resolve().parent
@@ -39,7 +41,7 @@ SPAWN = {
 }
 
 def new():
-    return {"phase": "lobby", "players": {}, "log": ["Sala abierta. Únanse y alguien pulse Empezar."], "bodies": [], "votes": {}, "winner": None, "last_push": None, "push_seq": 0}
+    return {"phase": "lobby", "players": {}, "log": ["Sala abierta. Únanse y alguien pulse Empezar."], "bodies": [], "votes": {}, "winner": None, "last_push": None, "push_seq": 0, "chat_log": [], "chat_seq": 0}
 G = new()
 def P(n):
     return G["players"].get(n)
@@ -145,6 +147,39 @@ def go_room(p, t):
         return {"error": "Esa sala no está conectada"}
     enter(p, t)
     return {"ok": 1}
+def say(p, n, d):
+    """Charla del lobby, o charla solo de fantasmas durante la partida."""
+    if G["phase"] == "meeting":
+        return {"error": "En la reunión se usa el chat de la mesa"}
+    if G["phase"] not in ("lobby", "play"):
+        return {"error": "Ahora no se puede hablar"}
+    text = " ".join(str(d.get("text", "")).split())
+    if not text:
+        return {"error": "Escribe un mensaje"}
+    if len(text) > SAY_MAX:
+        return {"error": f"Máximo {SAY_MAX} caracteres"}
+    if G["phase"] == "play" and p["alive"]:
+        return {"error": "Los vivos no hablan durante la partida"}
+    now = time.monotonic()
+    if now - p.get("say_at", 0) < SAY_COOLDOWN:
+        return {"error": "Espera un momento para hablar"}
+    kind = "lobby" if G["phase"] == "lobby" else "ghost"
+    p["say_at"] = now
+    G["chat_seq"] += 1
+    G["chat_log"].append({"id": G["chat_seq"], "from": n, "text": text, "kind": kind, "t": int(time.time())})
+    if len(G["chat_log"]) > 80:
+        del G["chat_log"][:-80]
+    return {"ok": 1, "id": G["chat_seq"]}
+def chat_for(p):
+    """Lo que este jugador puede leer. Un vivo nunca recibe la charla de fantasmas."""
+    if not p:
+        return []
+    out = []
+    for m in G["chat_log"]:
+        if m["kind"] == "ghost" and p["alive"]:
+            continue
+        out.append({"id": m["id"], "from": m["from"], "text": m["text"], "kind": m["kind"], "t": m["t"]})
+    return out[-40:]
 def act(d):
     global G
     a = d.get("action")
@@ -183,6 +218,8 @@ def act(d):
         G["phase"] = "play"
         G["log"].append("¡La partida empezó! Revisen su rol.")
         return {"ok": 1}
+    if a == "say":
+        return say(p, n, d)
     if G["phase"] == "end":
         return {"error": "La partida terminó"}
     if G["phase"] == "meeting":
@@ -345,7 +382,9 @@ def view(n, tok):
     return {"phase": G["phase"], "players": players, "log": G["log"][-40:], "me": me, "progress": [dn, tot], "map": MAP,
             "spawns": {room: {"x": xy[0], "y": xy[1]} for room, xy in SPAWN.items()},
             "rules": {"attack_range": ATTACK_RANGE, "push_range": PUSH_RANGE, "push_distance": PUSH_DISTANCE, "hitbox": HITBOX,
-                      "lives": LIVES, "attack_cooldown": ATTACK_COOLDOWN, "push_cooldown": PUSH_COOLDOWN},
+                      "lives": LIVES, "attack_cooldown": ATTACK_COOLDOWN, "push_cooldown": PUSH_COOLDOWN,
+                      "say_max": SAY_MAX, "say_cooldown": SAY_COOLDOWN},
+            "chat": chat_for(p) if p and p["token"] == tok else [],
             "last_push": G["last_push"], "winner": G["winner"]}
 def read_static(name):
     return (ROOT / name).read_text(encoding="utf-8")

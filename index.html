@@ -273,11 +273,38 @@ button svg.avatar{width:calc(22px * 1.3);height:calc(26px * 1.3);margin-right:4p
 .mtg-id .lives{margin-top:4px}
 .mtg-id .lives .heart{width:14px;height:13px}
 #ib-mute{margin:8px 0 0}
+.say-panel{display:flex;flex-direction:column;gap:8px;padding:16px 18px 14px}
+.say-panel[hidden]{display:none !important}
+.say-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;margin:0;padding:0;border:0;background:none;color:inherit;font:inherit;cursor:pointer;text-align:left}
+.say-head .kicker{margin:0}
+.say-chev{font-size:12px;font-weight:800;color:var(--ink-soft)}
+.say-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+.say-panel.is-collapsed .say-body{display:none}
+.say-log{height:148px;overflow:auto;padding:8px 10px;font-size:13px;line-height:1.4}
+.say-line{margin:0 0 6px;overflow-wrap:anywhere}
+.say-line b{font-weight:800}
+.say-empty,.say-note,.say-err{margin:0;font-size:12px;line-height:1.4}
+.say-empty,.say-note{color:var(--ink-soft)}
+.say-err{color:var(--danger);font-weight:700}
+.say-form{display:flex;gap:8px;align-items:center}
+.say-form input{flex:1;min-width:0;font-size:16px}
+.say-form .btn{margin:0;min-height:44px;white-space:nowrap}
+body.has-say{padding-bottom:0}
 @media (max-width:1080px){
   .wrap{grid-template-columns:minmax(0,1fr);grid-template-areas:"mast" "map" "side";padding:12px;width:100%}
   .map-card{padding:8px 8px 12px}
   #map{overflow:visible}
   #map svg.plano{width:100%;min-width:0}
+  body.has-say{padding-bottom:64px}
+  .say-panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:40;margin:0;
+    border-radius:18px 18px 0 0;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    max-height:min(58dvh,440px);
+    box-shadow:0 -10px 28px rgba(62,36,18,.2);
+  }
+  .say-panel.is-collapsed{max-height:none;box-shadow:0 -4px 16px rgba(62,36,18,.14)}
+  .say-log{height:min(34dvh,220px)}
 }
 @media (prefers-reduced-motion:reduce){
   button,.btn,.bar div{transition:none}
@@ -596,6 +623,7 @@ function draw(){
   }
   document.getElementById("panel").innerHTML=h;
   mtgSync();
+  saySync();
 }
 function askReset(){
   uiConfirm("¿Reiniciar la partida para todos?").then(ok=>{
@@ -856,13 +884,24 @@ function fxDecor(name){
   }
   return out;
 }
-function livesMark(n, y){
+const CUP_S=0.64*1.3;
+function heartGeom(sc){
+  const k=sc||1;
+  const ty=14-49*CUP_S;
+  const headTop=(ty+4*CUP_S)*k;
+  const scale=2.2*(CUP_S/0.64)*k;
+  const gap=4*k;
+  return {y:headTop-gap-2.4*scale, scale, step:6.2*scale*0.95};
+}
+function livesMark(n, sc){
   const max=maxLives();
   const v=clampLives(n); const c=v==null?max:v;
+  const g=heartGeom(sc);
   let s=`<g pointer-events="none"><title>${c} de ${max} vidas</title>`;
   for(let i=0;i<max;i++){
     const on=i<c;
-    s+=`<g transform="translate(${((i-(max-1)/2)*13).toFixed(1)},${y}) scale(2.2)"><path d="M0 2.4C0 2.4-3.1-.2-3.1-1.8A1.55 1.55 0 0 1 0-1.15 1.55 1.55 0 0 1 3.1-1.8C3.1-.2 0 2.4 0 2.4z" fill="${on?"#e0435a":"#fffaf3"}" stroke="${on?"#7a2430":"#c45c66"}" stroke-width=".9" stroke-linejoin="round"/></g>`;
+    const x=(i-(max-1)/2)*g.step;
+    s+=`<g transform="translate(${x.toFixed(1)},${g.y.toFixed(1)}) scale(${g.scale.toFixed(3)})"><path d="M0 2.4C0 2.4-3.1-.2-3.1-1.8A1.55 1.55 0 0 1 0-1.15 1.55 1.55 0 0 1 3.1-1.8C3.1-.2 0 2.4 0 2.4z" fill="${on?"#e0435a":"#fffaf3"}" stroke="${on?"#7a2430":"#c45c66"}" stroke-width=".9" stroke-linejoin="round"/></g>`;
   }
   return s+"</g>";
 }
@@ -887,7 +926,7 @@ function bindFxPositions(M){
   }
 }
 function nameTag(x,y,text,fs,anchor,sub){const fs2=Math.max(8,fs-2);const subColor=sub==="tú"?"#8a5a10":"#8a4032";const w=Math.max(String(text).length*fs*0.58,(sub?String(sub).length*fs2*0.58:0))+12;const h=sub?fs+fs2+7:fs+6;const left=anchor==="middle"?x-w/2:x;const tx=anchor==="middle"?x:x+6;const ta=anchor==="middle"?"middle":"start";return`<g pointer-events="none"><rect x="${left.toFixed(1)}" y="${(y-fs).toFixed(1)}" width="${w.toFixed(1)}" height="${h}" rx="4" fill="#fffaf3" fill-opacity=".94" stroke="#e4d2b4" stroke-width=".6"/><text x="${tx.toFixed(1)}" y="${y}" text-anchor="${ta}" font-size="${fs}" font-weight="700" fill="#3f2a1c" font-family="Manrope,system-ui,sans-serif">${esc(text)}</text>${sub?`<text x="${tx.toFixed(1)}" y="${y+fs2+1}" text-anchor="${ta}" font-size="${fs2}" font-weight="700" fill="${subColor}" font-family="Manrope,system-ui,sans-serif">${esc(sub)}</text>`:""}</g>`}
-function figure(it,cl,x,y,fs,sc,mode,pop){const kind=it.body?"dead":(it.ghost?"ghost":"live");const glyph=cupGlyph(it.name,kind);const tagX=mode==="right"?24:0;const tagY=mode==="right"?8:36;const anchor=mode==="right"?"start":"middle";const sub=it.body?"cuerpo":(it.self?"tú":"");const ring=!it.body&&it.self?`<ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/>`:"";const mot=motionFor(it.name);const hy=-46;return `<g class="${pop||""}" transform="translate(${(x+mot.dx).toFixed(1)},${(y+mot.dy).toFixed(1)})" pointer-events="none">${ring}<g transform="scale(${sc})">${glyph}</g>${livesMark(livesOf(it.name,!!it.body||!!it.ghost),hy)}${fxDecor(it.name)}${nameTag(tagX,tagY,it.name,fs,anchor,sub)}</g>`}
+function figure(it,cl,x,y,fs,sc,mode,pop){const kind=it.body?"dead":(it.ghost?"ghost":"live");const glyph=cupGlyph(it.name,kind);const tagX=mode==="right"?24:0;const tagY=mode==="right"?8:36;const anchor=mode==="right"?"start":"middle";const sub=it.body?"cuerpo":(it.self?"tú":"");const ring=!it.body&&it.self?`<ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/>`:"";const mot=motionFor(it.name);return `<g class="${pop||""}" transform="translate(${(x+mot.dx).toFixed(1)},${(y+mot.dy).toFixed(1)})" pointer-events="none">${ring}<g transform="scale(${sc})">${glyph}</g>${livesMark(livesOf(it.name,!!it.body||!!it.ghost),sc)}${fxDecor(it.name)}${nameTag(tagX,tagY,it.name,fs,anchor,sub)}</g>`}
 function finite(v){const n=Number(v);return Number.isFinite(n)?n:null}
 function peopleIn(room,M){
   if(!M||M.room!==room)return[];
@@ -1070,7 +1109,7 @@ p.push(`<g pointer-events="none" transform="translate(724,392)"><circle r="26" f
 for(const v of VENT_DRAW){p.push(`<g pointer-events="none"><polyline points="${poly(v.pts)}" fill="none" stroke="#241810" stroke-width="8" stroke-dasharray="1 7" stroke-linecap="round"/><polyline points="${poly(v.pts)}" fill="none" stroke="#eadcc8" stroke-width="3" stroke-dasharray="1 8" stroke-linecap="round"/><text x="${v.lx}" y="${v.ly}" font-size="11" font-weight="800" fill="#f6ebdd" stroke="#2a211c" stroke-width="3" paint-order="stroke" font-family="Manrope,system-ui,sans-serif">ventila</text></g>`)}
 bindFxPositions(M);
 for(const name in ROOMS){const r=ROOMS[name];const laid=placedPeople(name,M);let folks="";for(const spot of laid){if(walk&&spot.it.self&&!spot.it.body)continue;const key=spot.it.name+(spot.it.body?"#cuerpo":"");const pop=knownPeople&&!knownPeople.has(key)&&!reduceMotion?"pop":"";names.add(key);folks+=figure(spot.it,cl,spot.x,spot.y,spot.fs,spot.sc,spot.mode,pop)}const icon=name==="Barra"?iconFor(name):`<g transform="translate(${r.icon[0]},${r.icon[1]})">${iconFor(name)}</g>`;p.push(`<g pointer-events="none">${icon}${roomLabel(r)}${tasks.has(name)?taskBadge(r.badge[0],r.badge[1]):""}</g>`);p.push(folks)}
-if(walk&&M){const t=Math.min(1,(performance.now()-walk.t0)/walk.dur);const at=pointAt(walk.pts,ease(t));const dir=faceSign(walk.pts,t);const mot=motionFor(M.name);p.push(`<g id="walker" transform="translate(${(at.x+mot.dx).toFixed(1)},${(at.y+mot.dy).toFixed(1)})" pointer-events="none"><ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/><g class="face" transform="scale(${dir},1)">${cupGlyph(M.name,M.alive?"live":"ghost")}</g>${livesMark(livesOf(M.name,!M.alive),-46)}${fxDecor(M.name)}${nameTag(0,36,M.name,13,"middle","tú")}</g>`)}
+if(walk&&M){const t=Math.min(1,(performance.now()-walk.t0)/walk.dur);const at=pointAt(walk.pts,ease(t));const dir=faceSign(walk.pts,t);const mot=motionFor(M.name);p.push(`<g id="walker" transform="translate(${(at.x+mot.dx).toFixed(1)},${(at.y+mot.dy).toFixed(1)})" pointer-events="none"><ellipse cx="0" cy="16" rx="21" ry="5.4" fill="none" stroke="#e2a20e" stroke-width="1.8"/><g class="face" transform="scale(${dir},1)">${cupGlyph(M.name,M.alive?"live":"ghost")}</g>${livesMark(livesOf(M.name,!M.alive),1)}${fxDecor(M.name)}${nameTag(0,36,M.name,13,"middle","tú")}</g>`)}
 for(const v of VENT_DRAW){p.push(grate(v.ga[0],v.ga[1],false));p.push(grate(v.gb[0],v.gb[1],false))}
 for(const name in ROOMS){const r=ROOMS[name];const can=exits.has(name);const title=`<title>${esc(name)}${can?". Puedes entrar.":""}</title>`;p.push(roomEl(r,`class="hit${can?" can":""}" ${can?`data-move="${esc(name)}"`:""} fill="transparent"`,title))}
 p.push(propsLayer(M));
@@ -1279,6 +1318,105 @@ window.alert=function(message){return uiAlert(message)};
 window.confirm=function(message){return uiConfirm(message)};
 window.prompt=function(message,value){return uiPrompt(message,value)};
 
+let sayOpen=!matchMedia("(max-width:1080px)").matches, sayError="", saySig="";
+function sayEnsure(){
+  let root=document.getElementById("say-panel");
+  if(root) return root;
+  root=document.createElement("section");
+  root.id="say-panel";
+  root.className="card glass say-panel";
+  root.hidden=true;
+  root.setAttribute("aria-label","Charla");
+  const logCard=document.querySelector(".log-card");
+  logCard.parentElement.insertBefore(root, logCard);
+  root.addEventListener("click", ev=>{
+    if(ev.target.closest&&ev.target.closest("#say-toggle")){
+      sayOpen=!sayOpen;
+      saySig="";
+      sayPaint();
+    }
+  });
+  root.addEventListener("submit", ev=>{
+    if(!ev.target||ev.target.id!=="say-form") return;
+    ev.preventDefault();
+    const input=document.getElementById("say-input");
+    const text=(input&&input.value||"").trim();
+    if(!text) return;
+    saySend(text);
+  });
+  return root;
+}
+function sayCanSend(){
+  if(!S||!S.me) return false;
+  if(S.phase==="lobby") return true;
+  if(S.phase==="play"&&S.me.alive===false) return true;
+  return false;
+}
+function sayTitle(){
+  if(!S) return "Charla";
+  if(S.phase==="lobby") return "Charla del lobby";
+  if(S.me&&S.me.alive===false) return "Charla de fantasmas";
+  return "Charla";
+}
+function sayNote(){
+  if(!S||!S.me) return "";
+  if(S.phase==="play"&&S.me.alive) return "Durante la partida los vivos hablan en la reunión.";
+  if(S.phase==="play") return "Solo os leéis los fantasmas.";
+  if(S.phase==="lobby") return "Antes de empezar, os lee toda la sala.";
+  return "";
+}
+function sayLines(){
+  return (S&&S.chat)||[];
+}
+function saySignature(){
+  const lines=sayLines().map(m=>m.id+":"+m.kind+":"+m.text).join("\n");
+  const who=S&&S.me?S.me.name+":"+(S.me.alive?"1":"0"):"";
+  return [S&&S.phase, who, sayOpen?"1":"0", sayError, sayTitle(), lines].join("\n");
+}
+function sayPaint(){
+  const root=sayEnsure();
+  const show=!!(S&&S.me&&S.phase!=="meeting");
+  document.body.classList.toggle("has-say", show);
+  if(!show){root.hidden=true; saySig=""; return}
+  root.hidden=false;
+  const sig=saySignature();
+  if(sig===saySig) return;
+  const input=document.getElementById("say-input");
+  const draft=input?input.value:"";
+  const focused=!!(input&&document.activeElement===input);
+  const sel=focused?[input.selectionStart, input.selectionEnd]:null;
+  const box=document.getElementById("say-log");
+  const stick=!box||box.scrollHeight-box.scrollTop-box.clientHeight<36;
+  const prevScroll=box?box.scrollTop:0;
+  const lines=sayLines();
+  const body=lines.map(m=>`<p class="say-line"><b style="color:${mtgColor(m.from)}">${esc(m.from)}</b> ${esc(m.text)}</p>`).join("")||`<p class="say-empty">Nadie ha escrito todavía.</p>`;
+  const note=sayNote();
+  const err=sayError?`<p class="say-err" role="alert">${esc(sayError)}</p>`:"";
+  const form=sayCanSend()?`<form id="say-form" class="say-form" autocomplete="off"><input id="say-input" maxlength="200" placeholder="Escribe…" aria-label="Mensaje"><button type="submit" class="btn btn-primary">Enviar</button></form>${err}`:`<p class="say-note">${esc(note)}</p>`;
+  root.className="card glass say-panel"+(sayOpen?"":" is-collapsed");
+  root.innerHTML=`<button type="button" id="say-toggle" class="say-head" aria-expanded="${sayOpen?"true":"false"}"><span><span class="kicker">${esc(sayTitle())}</span></span><span class="say-chev">${sayOpen?"Ocultar":"Mostrar"}</span></button><div class="say-body"><div id="say-log" class="say-log glass-inset" role="log" aria-live="polite">${body}</div>${note&&sayCanSend()?`<p class="say-note">${esc(note)}</p>`:""}${form}</div>`;
+  saySig=sig;
+  const next=document.getElementById("say-input");
+  if(next){next.value=draft; if(focused){next.focus(); if(sel) next.setSelectionRange(sel[0], sel[1])}}
+  const log=document.getElementById("say-log");
+  if(log) log.scrollTop=stick?log.scrollHeight:prevScroll;
+}
+function saySync(){if(!S) return; sayPaint()}
+async function saySend(text){
+  try{
+    const r=await (await fetch("/",{method:"POST", body:JSON.stringify({name:me.name, token:me.token, action:"say", text})})).json();
+    if(r.error){sayError=r.error; saySig=""; sayPaint(); return}
+    sayError="";
+    const input=document.getElementById("say-input");
+    if(input) input.value="";
+    saySig="";
+    await poll();
+  }catch(e){
+    sayError="No se pudo enviar.";
+    saySig="";
+    sayPaint();
+  }
+}
 poll();
 setInterval(()=>{if(!document.activeElement||document.activeElement.tagName!='INPUT')poll()},2000);
 </script>

@@ -20,7 +20,13 @@ GET /state?name=NOMBRE&token=TOKEN
     id sube con cada empujón.
   spawns: punto de aparición de cada sala, en píxeles del plano.
   rules: attack_range, push_range, push_distance, hitbox, lives,
-    attack_cooldown, push_cooldown.
+    attack_cooldown, push_cooldown, say_max (200), say_cooldown (1 segundo).
+  chat: mensajes que este jugador puede leer. Cada uno es
+    {id, from, text, kind, t}.
+    kind "lobby": charla de antes de empezar. La ve toda la sala.
+    kind "ghost": charla de fantasmas durante la partida. Un vivo no la
+    recibe: no viene en su chat ni en ninguna otra parte del estado.
+    Sin token válido, chat llega vacío.
   progress: [tareas hechas, tareas totales]
   map: salidas de cada sala
   winner, log
@@ -84,6 +90,16 @@ Acciones
     Expulsar deja las vidas en 0. Luego todos vuelven a la Barra.
   chat    {text}
     En la reunión. Los vivos salen con 💬 y los fantasmas con 👻.
+    Es la única charla durante la reunión.
+  say     {text}
+    Charla aparte de la reunión.
+    En el lobby (antes de empezar), cualquiera. La ven todos.
+    Durante la partida, solo un fantasma. Los vivos no la ven y, si
+    intentan hablar, reciben "Los vivos no hablan durante la partida".
+    En la reunión no sirve: "En la reunión se usa el chat de la mesa".
+    Máximo say_max caracteres (200). Un mensaje como mucho cada
+    say_cooldown segundos (1); si no, "Espera un momento para hablar".
+    Vacío: "Escribe un mensaje". No entra en el registro público.
 
 Ganan
   Los tripulantes, si no queda ningún impostor vivo o si terminan todas las
