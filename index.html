@@ -16,12 +16,13 @@ svg{position:absolute;inset:0;pointer-events:none}.big{font-size:22px;text-align
 <div class="wrap"><div class="card"><div id="map"><svg id="lines" width="100%" height="100%"></svg></div>
 <div>Tareas de la tripulación</div><div class="bar"><div id="prog" style="width:0"></div></div></div>
 <div><div class="card" id="panel"></div><div class="card" style="margin-top:12px"><b>Registro</b><div id="log"></div></div></div></div>
+<script src="/sounds.js"></script>
 <script>
 const POS={"Barra":[300,30],"Tostadora":[520,30],"Caja":[300,150],"Bodega de granos":[300,280],"Cuarto de máquinas":[110,280],"Cámaras":[60,170],"Terraza":[640,170],"Cocina":[520,300],"Molinos":[150,390],"Caldera de espresso":[10,390]};
 const COL=["#e0435a","#4a6cff","#5fe08a","#ffd54a","#c45cff","#ff8c3a","#3ad4ff","#ff7ad9","#aaa","#fff"];
 let me=JSON.parse(localStorage.ib||"{}"),S=null;
 async function post(o){const r=await (await fetch("/",{method:"POST",body:JSON.stringify(Object.assign({name:me.name,token:me.token},o))})).json();if(r.error)alert(r.error);if(r.token){me={name:o.name,token:r.token};localStorage.ib=JSON.stringify(me)}poll();return r}
-async function poll(){S=await (await fetch(`/state?name=${encodeURIComponent(me.name||"")}&token=${me.token||""}`)).json();draw()}
+async function poll(){S=await (await fetch(`/state?name=${encodeURIComponent(me.name||"")}&token=${me.token||""}`)).json();try{if(window.IBSound)IBSound.sync(S)}catch(e){}draw()}
 function draw(){const m=document.getElementById("map"),M=S.me;m.querySelectorAll(".room").forEach(e=>e.remove());let ln="";
 for(const[a,bs]of Object.entries(S.map))for(const b of bs){const[x1,y1]=POS[a],[x2,y2]=POS[b];ln+=`<line x1=${x1+59} y1=${y1+35} x2=${x2+59} y2=${y2+35} stroke="#4a5f9e55" stroke-width=3 />`}
 document.getElementById("lines").innerHTML=ln;
