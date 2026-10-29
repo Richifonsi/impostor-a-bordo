@@ -122,6 +122,9 @@ class H(BaseHTTPRequestHandler):
         if u.path=="/help":
             try: return s.send(200,read_static("help.txt"),"text/plain")
             except FileNotFoundError: return s.send(404,"No hay ayuda.","text/plain")
+        if u.path=="/sounds.js":
+            try: return s.send(200,read_static("sounds.js"),"text/javascript")
+            except FileNotFoundError: return s.send(404,"","text/plain")
         return s.send(200,read_static("index.html"),"text/html")
     def do_POST(s):
         try: d=json.loads(s.rfile.read(int(s.headers.get("Content-Length",0))) or "{}")
