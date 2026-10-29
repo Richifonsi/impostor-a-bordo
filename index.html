@@ -889,8 +889,10 @@ function heartGeom(sc){
   const k=sc||1;
   const ty=14-49*CUP_S;
   const headTop=(ty+4*CUP_S)*k;
-  const scale=2.2*(CUP_S/0.64)*k;
-  const gap=4*k;
+  const scale=2.2*(CUP_S/0.64)*k*0.6;
+  // 0.73, not 0.8: the y=4 line is above the ink, so this is what
+  // leaves 80% of the painted gap under the smaller hearts.
+  const gap=4*k*0.73;
   return {y:headTop-gap-2.4*scale, scale, step:6.2*scale*0.95};
 }
 function livesMark(n, sc){
