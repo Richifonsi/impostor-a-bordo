@@ -44,6 +44,9 @@ def act(d):
         G["phase"]="play"; G["log"].append("¡La partida empezó! Revisen su rol."); return {"ok":1}
     if G["phase"]=="end": return {"error":"La partida terminó"}
     if G["phase"]=="meeting":
+        if a=="chat":
+            msg=str(d.get("text",""))[:200]
+            G["log"].append(("👻 " if not p["alive"] else "💬 ")+f"{n}: {msg}"); return {"ok":1}
         if a!="vote": return {"error":"Hay una reunión: solo se puede votar"}
         if not p["alive"]: return {"error":"Los fantasmas no votan"}
         if t!="skip" and (t not in G["players"] or not G["players"][t]["alive"]): return {"error":"Voto inválido"}
