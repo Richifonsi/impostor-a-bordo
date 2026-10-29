@@ -420,7 +420,10 @@ async function poll(){
 }
 function chipLi(name,mode){
   const tag=mode==="dead"?"cuerpo":mode==="ghost"?"fantasma":"";
-  return `<li class="cup-chip ${mode}">${avatarSVG(name,mode,36)}<span class="chip-txt"><b>${esc(name)}</b>${tag?`<small>${tag}</small>`:""}</span></li>`;
+  const row=(S.players||[]).find(p=>p.name===name);
+  const hearts=row&&row.lives!=null&&mode!=="dead"?`${row.lives} vidas`:"";
+  const sub=[tag,hearts].filter(Boolean).join(" · ");
+  return `<li class="cup-chip ${mode}">${avatarSVG(name,mode,36)}<span class="chip-txt"><b>${esc(name)}</b>${sub?`<small>${esc(sub)}</small>`:""}</span></li>`;
 }
 function roomRoster(M){
   const meMode=M.alive?"live":"ghost";
@@ -454,8 +457,10 @@ function draw(){
     }else{
       const imp=M.role=="impostor";
       h+=`<div class="role-banner ${imp?"is-impostor":"is-crew"}">${ico(imp?"bean":"Barra")}<div><span class="kicker">Tu rol</span><strong>${imp?"IMPOSTOR":"TRIPULANTE"}</strong></div></div>`;
+      if(M.lives!=null)h+=`<div class="block"><span class="kicker">Vidas</span><div class="stat-value"><b>${M.lives}</b></div></div>`;
       h+=`<div class="block"><span class="kicker">Sala</span><div class="stat-value">${ico(M.room)}<b>${esc(M.room)}</b></div></div>`;
       if(S.phase=="play"){
+        if(M.x!=null&&M.y!=null)h+=`<p class="hint">Posición ${M.x}, ${M.y}</p>`;
         h+=`<div class="block"><span class="kicker">Salidas</span><div class="chips">${M.exits.map(r=>`<button class="chip" type="button" onclick='post({action:"move",target:${JSON.stringify(r)}})'>${ico(r)}<span>${esc(r)}</span></button>`).join("")}</div></div>`;
         h+=roomRoster(M);
       }
@@ -467,12 +472,14 @@ function draw(){
         h+=`<div class="actions">`;
         if((M.tasks||[]).includes(M.room)||imp)h+=`<button class="btn btn-primary" type="button" onclick="post({action:'task'})">Hacer tarea</button>`;
         if(M.alive){
-          if(imp)(M.here||[]).forEach(n=>{h+=`<button class="btn btn-danger red" type="button" onclick='post({action:"kill",target:${JSON.stringify(n)}})'>${avatarSVG(n,"live",20)} Matar a ${esc(n)}</button>`});
+          if(imp)(M.here||[]).forEach(n=>{h+=`<button class="btn btn-danger red" type="button" onclick='post({action:"kill",target:${JSON.stringify(n)}})'>${avatarSVG(n,"live",20)} Atacar a ${esc(n)}</button>`});
+          (M.here||[]).forEach(n=>{h+=`<button class="btn btn-ghost gray" type="button" onclick='post({action:"push",target:${JSON.stringify(n)}})'>Empujar a ${esc(n)}</button>`});
           if((M.bodies||[]).length)h+=`<button class="btn btn-danger red" type="button" onclick="post({action:'report'})">Reportar cuerpo</button>`;
           h+=`<button class="btn btn-ghost gray" type="button" onclick="post({action:'meeting'})">🚨 Emergencia</button>`;
         }
         h+=`</div>`;
         if(imp&&M.cd)h+=`<p class="cooldown">Enfriamiento: ${M.cd}</p>`;
+        if(M.alive&&M.push_cd)h+=`<p class="cooldown">Empuje: ${M.push_cd}</p>`;
         h+=`<p class="hint">Haz clic en una sala con borde verde para moverte.</p>`;
       }
       if(S.phase=="meeting")h+=`<p class="mtg-note">Reunión en curso: la votación está en la mesa.</p>`;

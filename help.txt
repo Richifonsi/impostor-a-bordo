@@ -1,0 +1,95 @@
+Impostor a Bordo — acciones por HTTP
+
+Hay una sola partida en memoria. Los bots juegan por turnos: un POST por acción y un GET para leer el estado.
+
+POST /
+  Cuerpo JSON. Siempre hace falta name y token, salvo en join y reset.
+  Respuesta JSON: {"ok": 1} o {"error": "..."}.
+
+GET /state?name=NOMBRE&token=TOKEN
+  phase: lobby | play | meeting | end
+  players[]: name, alive, voted, lives, x, y, room
+    Durante play, alive llega como true para no revelar fantasmas en el panel.
+    lives, x, y y room son los valores reales.
+  me: tu ficha, solo si el token coincide. Incluye role, room, alive, lives,
+    x, y, tasks, done, cd (enfriamiento del ataque), push_cd, exits, vent,
+    here (nombres vivos en tu sala), bodies (nombres de cuerpos en tu sala),
+    corpses (cuerpos con x, y), positions (todos los de tu sala, vivos o no).
+  last_push: último empujón, o null. Sirve para animar.
+    {id, by, target, room, from:{x,y}, to:{x,y}}
+    id sube con cada empujón.
+  spawns: punto de aparición de cada sala, en píxeles del plano.
+  rules: attack_range, push_range, push_distance, hitbox, lives,
+    attack_cooldown, push_cooldown.
+  progress: [tareas hechas, tareas totales]
+  map: salidas de cada sala
+  winner, log
+
+Coordenadas
+  x e y son píxeles del plano, el mismo espacio en el que está dibujada la sala
+  (origen arriba a la izquierda, y hacia abajo). Cada jugador ocupa un punto
+  dentro de la silueta de su sala. Al entrar, al cambiar de sala y al salir
+  de una reunión, queda en el punto de aparición de esa sala (spawns).
+  La caja de golpe es un círculo de radio hitbox (14 px). attack_range (40)
+  y push_range (40) miden la holgura entre bordes: hay alcance si la distancia
+  entre centros es menor o igual que 40 + 2 * 14.
+
+Acciones
+  reset
+    Vacía la sala. No usa token.
+  join    {name}
+    Entra al lobby, en la Barra, en su punto de aparición, con 3 vidas.
+    Devuelve token.
+  start
+    Con 3 o más jugadores. Un impostor; dos si hay 7 o más.
+    Todos vuelven a la Barra.
+  move    {target: "Sala"}
+    Cambio de sala, igual que antes. La sala tiene que ser vecina.
+    La posición pasa al punto de aparición de la sala nueva.
+  move    {x, y}   o   moveto {x, y}
+    Camina a un punto de la sala actual. Si el punto cae fuera de la silueta:
+    "Ese punto está fuera de la sala" y no te mueves. No cambia de sala.
+  vent
+    Solo el impostor, y solo en una sala con ventila. Aparece en la otra punta.
+  task
+    El tripulante completa la tarea de su sala. El impostor solo finge.
+    Un fantasma tripulante también puede completarla.
+  kill    {target}
+    Ataque del impostor. Quita 1 vida. No mata de un golpe.
+    Falla con "No está en tu sala" si el objetivo está en otra sala,
+    o con "Está fuera de alcance" si la holgura entre cajas supera attack_range.
+    "Objetivo inválido" si no existe, está muerto o es impostor.
+    Tras un golpe, cd queda en 3. Cada acción siguiente lo baja 1 al empezar,
+    y el ataque responde "Espera N acciones más" si después de esa resta el
+    contador sigue por encima de 0. Hace falta dejar pasar dos acciones; a la
+    tercera el golpe vuelve a entrar.
+    A 0 vidas el jugador muere: deja de estar en juego, se vuelve fantasma
+    y su cuerpo queda en la sala, en el punto donde cayó, para reportarlo.
+  push    {target}
+    Cualquier vivo. El objetivo tiene que estar en tu sala y dentro de
+    push_range. Lo desplaza push_distance píxeles (30) en la dirección que
+    lo aleja de ti, sin pasarse de la silueta de la sala. No quita vidas.
+    Si ya está contra el borde, se mueve menos.
+    push_cd queda en 2. El empujón siguiente responde
+    "Espera N acciones más para empujar"; el de después ya entra, si el
+    objetivo sigue a alcance. Si está lejos: "Está fuera de alcance para empujar".
+    El estado guarda el evento en last_push.
+  report
+    Si hay un cuerpo en tu sala, abre la reunión.
+  meeting
+    Botón de emergencia. Una vez por jugador.
+  vote    {target: "Nombre" | "skip"}
+    Solo en la reunión, y solo los vivos. Cuando votan todos los vivos se
+    resuelve: expulsan a quien tenga más votos, salvo empate o skip.
+    Expulsar deja las vidas en 0. Luego todos vuelven a la Barra.
+  chat    {text}
+    En la reunión. Los vivos salen con 💬 y los fantasmas con 👻.
+
+Ganan
+  Los tripulantes, si no queda ningún impostor vivo o si terminan todas las
+  tareas. El impostor, si hay al menos tantos impostores vivos como
+  tripulantes vivos. Las vidas no cambian esas cuentas: importa quién sigue
+  vivo (lives > 0 y no expulsado).
+
+Los fantasmas se mueven (move y moveto) y, si eran tripulantes, siguen con
+sus tareas. No atacan, no empujan y no votan.
